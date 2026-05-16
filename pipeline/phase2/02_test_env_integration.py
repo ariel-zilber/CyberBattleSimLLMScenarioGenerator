@@ -21,6 +21,7 @@ import json
 import networkx as nx
 from pathlib import Path
 from collections import Counter, deque
+from pipeline import constants as C
 
 # Add repo root and pipeline/ to sys.path
 REPO_ROOT    = Path(__file__).resolve().parent.parent
@@ -1507,4 +1508,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

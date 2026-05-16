@@ -174,7 +174,7 @@ class CredentialResolver:
     def resolve_outcome_credentials(self, abstract_creds: List[str], 
                                    context_node_id: str = None,
                                    max_per_type: int = 3,
-                                   probability: float = 0.7) -> List[tuple]:
+                                   probability: float = C.DEFAULT_CREDENTIAL_PROBABILITY) -> List[tuple]:
         """
         Convert abstract credential names to actual CachedCredential tuples.
         
@@ -248,7 +248,7 @@ class VulnerabilityManager:
             cred_tuples = self.credential_resolver.resolve_outcome_credentials(
                 leaked_creds_abstract,
                 max_per_type=2,      # Leak at most 2 creds per type
-                probability=0.7      # 70% chance per credential
+                probability=C.DEFAULT_CREDENTIAL_PROBABILITY      # Balanced chance per credential
             )
             
             # Create proper CachedCredential objects
@@ -259,4 +259,4 @@ class VulnerabilityManager:
             ]
             
             return LeakedCredentials(credentials=cached_creds)
-"""
+"""""

@@ -116,3 +116,27 @@ DEFAULT_TECHNIQUE_COST: float = 2.0
 
 DEFAULT_CVE_COST: float = 1.0
 # The standard cost assigned to CVE-backed exploits.
+
+# ── Credential & Vulnerability Defaults ──────────────────────────────────────
+
+DEFAULT_CREDENTIAL_PROBABILITY: float = 0.5
+# Default probability for credential selection in banks (replaces legacy 0.7).
+
+VULN_COST_TIER_LOW: float = 3.0
+VULN_COST_TIER_MEDIUM: float = 7.0
+VULN_COST_TIER_HIGH: float = 10.0
+# Hardcoded cost boundaries used by VulnerabilityLibraryManager.
+
+# ── Evaluator Thresholds & Retries ───────────────────────────────────────────
+
+MAX_BFS_RETRIES: int = 8
+# Max retries for agent actions during runtime evaluation.
+
+STEALTH_DETECTION_THRESHOLD: float = 10.0
+# Global threshold for stealth detection metrics.
+
+RATING_EXTREME: float = 8.0
+RATING_HARD: float = 6.0
+RATING_MODERATE: float = 4.0
+RATING_EASY: float = 2.0
+# Difficulty rating thresholds used by the test environment integrator.

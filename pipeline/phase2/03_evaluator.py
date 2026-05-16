@@ -588,7 +588,9 @@ def _annotate_path(
 # Elite BFS Solver Metrics (§3.5)
 # ---------------------------------------------------------------------------
 
-_STEALTH_DETECTION_THRESHOLD = 10.0   # default; override per-call
+from pipeline import constants as C
+
+_STEALTH_DETECTION_THRESHOLD = C.STEALTH_DETECTION_THRESHOLD   # default; override per-call
 
 
 def _count_shortest_paths(
