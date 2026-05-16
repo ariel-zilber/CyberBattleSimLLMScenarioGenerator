@@ -96,7 +96,7 @@ class GoalNormalizer:
         self.attack_flow = config.get('attack_flow', [])
 
         # Registry: only names declared in YAML may be injected
-        from cbsim.components.solvability_post_processor import _collect_planned_vuln_names
+        from pipeline.cbsim.components.solvability_post_processor import _collect_planned_vuln_names
         self._planned_vuln_names: Set[str] = _collect_planned_vuln_names(config)
 
         # Pre-build depth graph — immutable after init, no need to rebuild per call

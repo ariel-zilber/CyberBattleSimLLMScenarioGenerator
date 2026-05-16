@@ -39,7 +39,7 @@ class SolvabilityConstraintProcessor:
         self.attack_flow = config.get('attack_flow', [])
 
         # Registry of all vulnerability names declared in the YAML config.
-        from cbsim.components.solvability_post_processor import _collect_planned_vuln_names
+        from pipeline.cbsim.components.solvability_post_processor import _collect_planned_vuln_names
         self._planned_vuln_names: set = _collect_planned_vuln_names(config)
 
     def _check_planned(self, tmpl: Dict, context: str = '') -> bool:

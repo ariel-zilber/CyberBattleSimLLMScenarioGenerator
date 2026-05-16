@@ -161,7 +161,7 @@ def step_fetch_vulns(domain: str, out_path: Path) -> bool:
 
     cmd = [
         sys.executable,
-        str(REPO_ROOT / "data_preprocessing" / "nvd_scraper.py"),
+        str(REPO_ROOT / "pipeline" / "data_preprocessing" / "nvd_scraper.py"),
         "--query", query,
         "--min-cvss", str(min_cvss),
         "--limit",    str(limit),

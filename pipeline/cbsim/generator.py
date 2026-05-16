@@ -8,14 +8,14 @@ from cyberbattle.simulation.nodes import NodeInfo
 from cyberbattle.simulation.identifiers import Identifiers
 from cyberbattlesim_network_gen.generators.network_generator import NetworkGenerator
 
-from cbsim.domain_loader import YamlDomainLoader
-from cbsim.components.network_utils import NetworkUtils
-from cbsim.components.node_builder import NodeBuilder
-from cbsim.components.constraint_engine import ConstraintEngine
-from cbsim.components.solvability_constraint_processor import SolvabilityConstraintProcessor
-from cbsim.components.vulnerability_manager import VulnerabilityManager
-from cbsim.components.solvability_post_processor import SolvabilityPostProcessor
-from cbsim.goal_normalizer import GoalNormalizer
+from pipeline.cbsim.domain_loader import YamlDomainLoader
+from pipeline.cbsim.components.network_utils import NetworkUtils
+from pipeline.cbsim.components.node_builder import NodeBuilder
+from pipeline.cbsim.components.constraint_engine import ConstraintEngine
+from pipeline.cbsim.components.solvability_constraint_processor import SolvabilityConstraintProcessor
+from pipeline.cbsim.components.vulnerability_manager import VulnerabilityManager
+from pipeline.cbsim.components.solvability_post_processor import SolvabilityPostProcessor
+from pipeline.cbsim.goal_normalizer import GoalNormalizer
 from cyberbattle.simulation.vulenrabilites import (
     VulnerabilityInfo, VulnerabilityType, ProbeSucceeded, 
     LeakedCredentials, CachedCredential, CustomerData,

@@ -63,7 +63,7 @@ DATA_DIR      = REPO_ROOT / "data" / "scenarios"
 PROMPTS_DIR   = REPO_ROOT / "prompts"
 TOOLS_DIR         = REPO_ROOT / "pipeline"
 PHASE1_DIR        = TOOLS_DIR / "phase1"
-PIPELINE_DATA_DIR = REPO_ROOT / "data_preprocessing"
+PIPELINE_DATA_DIR = REPO_ROOT / "pipeline" / "data_preprocessing"
 
 
 def _load_env() -> dict:
