@@ -236,6 +236,30 @@ def _build_llm_eval_prompt(yaml_text: str, config_name: str,
             f"{k}={v}" for k, v in sorted(oc.items(), key=lambda x: -x[1]) if v > 0
         ) if oc else "  (none)"
 
+        # ── Cumulative Success Rate (CSR) Calculation (Q27) ──────────────────
+        # Computes end-to-end probability floor for DRL training feasibility.
+        csr_data = ""
+        path_info = graph_metrics.get("attack_paths", {}).get("shortest_path_to_goal", [])
+        if path_info and isinstance(path_info, list):
+            # Calculate end-to-end SR: P(success) = Product(SR_i)
+            # We assume a base SR of 0.75 for missing data, or use actual metrics if available.
+            path_srs = [node.get("exploit_sr", 0.75) if isinstance(node, dict) else 0.75 for node in path_info]
+            cumulative_sr = 1.0
+            for sr in path_srs:
+                cumulative_sr *= sr
+            
+            csr_status = "CRITICAL (Reward Sparsity)" if cumulative_sr < 0.10 else \
+                         "WARNING (Slow Convergence)" if cumulative_sr < 0.25 else "HEALTHY"
+            
+            csr_data = f"""
+### DRL Training Feasibility: Cumulative Success Rate (CSR)
+- Shortest Attack Path : {len(path_info)} hops
+- Cumulative SR (CSR)  : {cumulative_sr:.2%}
+- Convergence Signal   : {csr_status}
+  (Success reward seen ~1 in {int(1/cumulative_sr) if cumulative_sr > 0 else 'inf'} training episodes)
+"""
+        # ─────────────────────────────────────────────────────────────────────
+
         # Allowed ports
         ports_str = ", ".join(fw.get("common_allowed_ports", {}).keys()) or "(none)"
 
@@ -320,12 +344,13 @@ Heuristic agents (3 agents × 3 episodes/scenario) over {n} scenarios:
 
 ### Action Outcome Totals
 {oc_str}
-
+{csr_data}
 ### Per-Stratum Breakdown
 {strata_lines.rstrip()}
 
 **Primary difficulty targets (use these for scenario_difficulty scoring):**
 - Solve rate 40–80% is ideal. < 30% = too hard / unsolvable. > 85% = too easy.
+- **CSR Target: 20–40%**. CSR < 10% is "scientifically difficult" but "DRL-impossible" due to reward sparsity.
 - Mean steps to first goal > 200 indicates non-trivial attack depth.
 - Mean nodes owned < 50% of total at termination suggests good segmentation.
 - Mean creds in cache ≈ mean creds discovered = zero decay (bad); large gap = good decay (hard).
