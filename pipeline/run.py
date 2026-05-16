@@ -126,6 +126,14 @@ class PipelineRunner:
         self._log_fh  = self.log_path.open("w", encoding="utf-8", buffering=1)
         self._step    = 0
         self._errors: list = []
+        
+        # ── Telemetry storage ────────────────────────────────────────────────
+        self.telemetry = {
+            "start_time": datetime.datetime.now().isoformat(),
+            "tools":      [],  # list of {name, duration, success, cmd}
+            "retries":    [],  # list of {step, attempt, count}
+            "config":     str(self._active_config),
+        }
 
     # ── Dynamic paths (follow active config version) ────────────────────────
 
@@ -182,10 +190,24 @@ class PipelineRunner:
              abort_on_error: bool = True, env: dict | None = None) -> subprocess.CompletedProcess:
         self._log(f"  $ {' '.join(str(c) for c in cmd)}")
         run_env = {**os.environ, **(env or {})}
+        
+        start_t = time.perf_counter()
         result  = subprocess.run(
             [str(c) for c in cmd],
             capture_output=True, text=True, cwd=str(cwd), env=run_env,
         )
+        duration = round(time.perf_counter() - start_t, 2)
+        
+        # Log to telemetry
+        tool_name = Path(cmd[1]).name if "python" in str(cmd[0]) else Path(cmd[0]).name
+        self.telemetry["tools"].append({
+            "step":     self._step,
+            "name":     tool_name,
+            "duration": duration,
+            "success":  result.returncode == 0,
+            "cmd":      " ".join(str(c) for c in cmd)
+        })
+
         if result.stdout:
             for line in result.stdout.splitlines():
                 self._log(f"    {line}")
@@ -662,6 +684,12 @@ class PipelineRunner:
                 self._ok("All scenarios solvable — no replacement needed")
                 return True
 
+            self.telemetry["retries"].append({
+                "step":    self._step,
+                "attempt": attempt,
+                "count":   len(unsolved)
+            })
+
             self._log(
                 f"\n  [Replacement {attempt}/{max_attempts}] "
                 f"{len(unsolved)} unsolved scenario(s) — deleting and regenerating ..."
@@ -884,9 +912,39 @@ class PipelineRunner:
         self._log(f"  Initial config : {self._initial_domain}.yaml")
         self._log(f"  Final config   : {self.config_path.name}")
         self._log(f"  Log saved      : {self.log_path}")
+        
+        # ── Finalize Telemetry ───────────────────────────────────────────────
+        self._write_telemetry()
+        
         self._log("=" * 66)
         self._log_fh.close()
         return True
+
+    def _write_telemetry(self) -> None:
+        """Export tool metrics and retry data to telemetry.json."""
+        self.telemetry["end_time"] = datetime.datetime.now().isoformat()
+        self.telemetry["total_duration"] = round(
+            sum(t["duration"] for t in self.telemetry["tools"]), 2
+        )
+        self.telemetry["final_config"] = str(self.config_path)
+        
+        # Calculate totals
+        self.telemetry["summary"] = {
+            "total_tools_called": len(self.telemetry["tools"]),
+            "failed_tool_calls":  len([t for t in self.telemetry["tools"] if not t["success"]]),
+            "total_retries":      len(self.telemetry["retries"]),
+            "scenarios_replaced": sum(r["count"] for r in self.telemetry["retries"])
+        }
+
+        # Save to phase2 directory if it exists, otherwise logs_dir
+        out_dir = self.phase2_out if self.phase2_out.exists() else self.logs_dir
+        out_path = out_dir / "telemetry.json"
+        
+        try:
+            out_path.write_text(json.dumps(self.telemetry, indent=2), encoding="utf-8")
+            self._log(f"  Telemetry      : {out_path.name}")
+        except Exception as e:
+            self._log(f"  [WARN] Failed to write telemetry: {e}")
 
     def close(self) -> None:
         if not self._log_fh.closed:
