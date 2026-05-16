@@ -28,19 +28,19 @@ Run the relevant fetch scripts based on `$ARGUMENTS` (all by default):
 
 **Windows CVEs (NVD API v2):**
 ```bash
-python data_preprocessing/nvd_scraper.py
+python pipeline/data_preprocessing/nvd_scraper.py
 ```
 
 **Network device CVEs (NVD + EPSS + CISA KEV):**
 ```bash
-python data_preprocessing/scrape_domain_cves.py
+python pipeline/data_preprocessing/scrape_domain_cves.py
 ```
 
 **Bitnami CVEs (Trivy image scans + official vulndb + DockerHub weights):**
 ```bash
-python data_preprocessing/scan_bitnami_images.py
-python data_preprocessing/fetch_bitnami_vulndb.py
-python data_preprocessing/fetch_dockerhub_pulls.py
+python pipeline/data_preprocessing/scan_bitnami_images.py
+python pipeline/data_preprocessing/fetch_bitnami_vulndb.py
+python pipeline/data_preprocessing/fetch_dockerhub_pulls.py
 ```
 
 Report counts after each script: `N CVEs written to data/vulnerability_db/<file>.json`.
@@ -52,10 +52,10 @@ Report counts after each script: `N CVEs written to data/vulnerability_db/<file>
 Run in order (each script reads and overwrites the JSON in-place):
 
 ```bash
-python data_preprocessing/merge_bitnami_datasets.py
-python data_preprocessing/tag_mitre_tactics.py
-python data_preprocessing/add_missing_tactic_cves.py
-python data_preprocessing/equalize_cves.py
+python pipeline/data_preprocessing/merge_bitnami_datasets.py
+python pipeline/data_preprocessing/tag_mitre_tactics.py
+python pipeline/data_preprocessing/add_missing_tactic_cves.py
+python pipeline/data_preprocessing/equalize_cves.py
 ```
 
 After each script report: script name + records before → after.
@@ -65,7 +65,7 @@ After each script report: script name + records before → after.
 ## Step 3 — MITRE analysis report (optional)
 
 ```bash
-python data_preprocessing/mitre_attack_analysis.py
+python pipeline/data_preprocessing/mitre_attack_analysis.py
 ```
 
 Prints a per-tactic CVE coverage table. Use this to verify enrichment quality.

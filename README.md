@@ -11,7 +11,7 @@ The pipeline takes a natural-language scenario description, produces a validated
 ```
 CyberBattleSimDomainGenerator/
 │
-├── cbsim/                        # Core generator package
+├── pipeline/cbsim/                        # Core generator package
 │   ├── generator.py              # Main network generator (UniversalNetworkGenerator)
 │   ├── domain_loader.py          # YAML domain config parser
 │   ├── goal_normalizer.py        # Post-processing: normalizes goal nodes
@@ -27,7 +27,7 @@ CyberBattleSimDomainGenerator/
 │       ├── network_utils.py
 │       └── vulnerability_library_manager.py
 │
-├── data_preprocessing/           # One-time data acquisition + CVE curation (run before pipeline)
+├── pipeline/data_preprocessing/           # One-time data acquisition + CVE curation (run before pipeline)
 │   ├── nvd_scraper.py            # NVD API v2 → Windows CVEs JSON
 │   ├── scrape_domain_cves.py     # NVD/EPSS/KEV → network device CVEs JSON
 │   ├── scan_bitnami_images.py    # Trivy image scans → bitnami_cves.json

@@ -369,7 +369,7 @@ The `run.py` header comment still labels "Generate stratified scenarios" as **st
 - Run Phase 1 validation and reporting first (steps 1–2).
 - Defer scenario generation until after a clean static pass (step 4).
 
-There is **no** intended preprocessing step between `phase1_report.txt` and Phase 2 generation. Optional work that might have been "step 3" in older designs (architecture mapping, config enrichment) is either merged into `01_template_validator.py` / `phase1/pipeline.py` or lives in the separate `data_preprocessing/` one-time flow.
+There is **no** intended preprocessing step between `phase1_report.txt` and Phase 2 generation. Optional work that might have been "step 3" in older designs (architecture mapping, config enrichment) is either merged into `01_template_validator.py` / `phase1/pipeline.py` or lives in the separate `pipeline/data_preprocessing/` one-time flow.
 
 **Action:** Renumber comments and headers to 1 → 1b → 2 → 3 (generate) → 4 (BFS) → 5 (critic loop) → 6 → 7, or update the docstring to match the current 4–7 labels.
 

@@ -10,8 +10,8 @@ them in an actor-critic loop until a quality threshold is met.
 ## Repository Layout
 
 ```
-cbsim/              Core network generator package (UniversalNetworkGenerator)
-data_preprocessing/ One-time data acquisition + CVE curation (run before pipeline)
+pipeline/cbsim/              Core network generator package (UniversalNetworkGenerator)
+pipeline/data_preprocessing/ One-time data acquisition + CVE curation (run before pipeline)
 pipeline/           Python package — per-run generation pipeline
   phase1/           01_template_validator → 02_config_checker → 03_validate_zone_coverage
                     (static soundness: schema, CVE catalog, zone coverage, agent-category allowlist)
