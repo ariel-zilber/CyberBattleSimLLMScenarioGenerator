@@ -1,0 +1,1071 @@
+# =============================================================================
+# S-WIN-01: Windows Server Farm Infiltration — Standalone Specialist Training
+# Agent: S_AD
+# Zones: Z1 HQ VLANs (10.1.0.0/24) + Z1 Server Farm (10.1.10.0/24)
+# Terminal goal: DomainController (value 10000, is_goal: true)
+# Nodes: 75–1200
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   The perimeter (Z4/Z2) is absent — S_Windows operates entirely inside Z1.
+#   SalesWorkstation is the pre-owned breach node (SR 1.0 trivial entry).
+#   The agent's challenge: lateral movement across workstation VLANs, then
+#   pivot to the Server Farm and escalate to DomainController.
+#
+# ATTACK PATH:
+#   1. Probe — Remote.Probe.Windows fingerprints OS version and patch level
+#   2. VLAN entry — SR 1.0 trivial probe on SalesWorkstation (breach_node)
+#   3. Lateral movement — BlueKeep (SR 0.90) / EternalBlue (SR 0.88) on
+#      other workstations; Mimikatz_LSASS (SR 0.70) for credential harvest
+#   4. Server Farm entry — SMBGhost/EternalBlue on FileServer via SMB
+#   5. Exchange pivot — ProxyLogon (SR 0.90) / ProxyShell (SR 0.90) on
+#      ExchangeServer
+#   6. MSSQL — MSSQL_RCE_1 (SR 0.88) on MSSQLServer
+#   7. HyperV — HyperV_RCE (SR 0.90) on HyperVHost
+#   8. DC — SIGRed (SR 0.90) / DNS_RCE_1 (SR 0.90) / RPC_RCE_2 (SR 0.90)
+#      → TERMINAL GOAL
+#
+# GLOBALTECH ZONE REFERENCE:
+#   Z1 HQ VLANs     10.1.0.0/24   Workstation VLANs (Sales/Finance/RnD/Admin)
+#   Z1 Server Farm  10.1.10.0/24  File/Exchange/MSSQL/HyperV/DC
+# =============================================================================
+
+config:
+  min_total_nodes: 75
+  max_total_nodes: 1200
+  goal_config:
+    num_goals: 1
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - RDP
+    - SMB
+    - HTTPS
+    - HTTP
+    - LDAP
+    - LDAPS
+    - Kerberos
+    - MSSQL
+    - WinRM
+    - SSH
+  standard_ports_extra:
+    - DNS
+    - NTP
+    - SMTP
+    - LSASS
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # OS families
+    - Windows
+    - WindowsServer
+    - Win2019
+    - Win2022
+    - Win10
+    - Win7
+    # Domain membership
+    - DomainJoined
+    - DomainController
+    - DomainAdmin
+    - LocalAdmin
+    # Node roles
+    - WorkStation
+    - FileServer
+    - PrintServer
+    - MailServer
+    - WebServer
+    - IISServer
+    - DatabaseServer
+    - MSSQLServer
+    - HyperVHost
+    # AD roles
+    - ADCS
+    - AD_KerberosKDC
+    - DNSServer
+    # Vulnerability properties
+    - SMBv1
+    - SMB
+    - RDP
+    - PrintSpooler
+    - WDigest
+    - NoLAPS
+    - ASREProastable
+    - Kerberoastable
+    - FinancialData
+    - SensitiveData
+    - AdminCredentials
+    - Unpatched
+    - Win2019
+
+os_management_ports:
+  Windows: RDP
+  WindowsServer: RDP
+  default: RDP
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.20
+  properties:
+    - breach_node
+  default_entry_port: RDP
+  preferred_entry_ports:
+    - RDP
+    - SMB
+  entry_node_count: 1
+  leaked_node_coverage: 0.20
+  min_leaked_nodes: 2
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Windows.Recon
+      type: LOCAL
+      description: "OSINT and port scanning to identify externally exposed RDP endpoints and enumerate AD-joined hostnames via DNS/LDAP. Identifies Windows version and patch level from SMB banners."
+      cost: 0.5
+      success_rate: 0.90
+      reward: "Windows domain identified — externally reachable RDP/SMB endpoints mapped, AD domain FQDN resolved"
+    credential_leak:
+      name: External.Phishing.CredHarvest
+      type: LOCAL
+      description: "Spear-phishing campaign targeting domain users. Harvests one valid set of domain credentials via fake Microsoft 365 login portal targeting SalesWorkstation users."
+      cost: 1.5
+      success_rate: 0.50
+      reward: "Domain user credentials obtained via phishing — initial foothold credential for SalesWorkstation established"
+
+attack_flow:
+  - source_pattern: SalesWorkstation
+    targets:
+      - FinanceWorkstation
+      - RnDWorkstation
+      - AdminWorkstation
+  - source_pattern: FinanceWorkstation
+    targets:
+      - FileServer
+      - IISServer
+  - source_pattern: RnDWorkstation
+    targets:
+      - FileServer
+      - HyperVHost
+  - source_pattern: AdminWorkstation
+    targets:
+      - FileServer
+      - DomainController
+  - source_pattern: FileServer
+    targets:
+      - ExchangeServer
+      - MSSQLServer
+      - HyperVHost
+  - source_pattern: ExchangeServer
+    targets:
+      - MSSQLServer
+      - DomainController
+  - source_pattern: MSSQLServer
+    targets:
+      - DomainController
+  - source_pattern: HyperVHost
+    targets:
+      - DomainController
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.Windows.CredentialCache
+    type: LOCAL
+    description: "Extract cached domain credentials from Windows Credential Manager, LSASS memory, or browser saved passwords on a compromised domain-joined Windows host."
+    cost: 0.5
+    success_rate: 0.70
+    reward: "Cached domain credentials extracted from {target} — lateral movement credential obtained"
+    node_probability: 0.65
+    target_coverage: 0.55
+    min_targets: 2
+    default_port: SMB
+  leak_neighbors:
+    name: Local.Windows.NetDiscovery
+    type: LOCAL
+    description: "Windows net commands, ARP cache enumeration, and SMB share browsing to discover adjacent domain-joined hosts on the same VLAN/subnet."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Domain-joined neighbor {target} discovered via SMB/ARP enumeration"
+    node_probability: 0.60
+    target_coverage: 0.55
+    min_targets: 2
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Windows
+    os: Windows
+    type: REMOTE
+    description: "Identifies Windows OS version, patch level, and domain membership via RDP protocol negotiation, SMB v1/v2 banner, and NetBIOS name enumeration."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.WindowsServer
+    os: WindowsServer
+    type: REMOTE
+    description: "Identifies Windows Server version (2016/2019/2022) and installed roles via SMB banner, LDAP signing requirements, and HTTP Negotiate header."
+    cost: 0.5
+    success_rate: 1.0
+
+solvability_vulnerabilities:
+  remote_access:
+
+    # ── Trivial breach_node entry ─────────────────────────────────────────────
+    - name: Solvability.BreachNode_Entry
+      type: REMOTE
+      description: "SR 1.0 trivial probe on pre-owned breach node. Models the completed perimeter handoff from S_Network — SalesWorkstation is already owned when the episode starts."
+      cost: 0.5
+      success_rate: 1.0
+      reward: "Breach node SalesWorkstation owned — perimeter handoff complete, VLAN foothold established"
+      match_properties:
+        - Windows
+        - breach_node
+      probability: 1.0
+
+    # ── Workstation RDP exploits ──────────────────────────────────────────────
+    - name: Solvability.BlueKeep
+      type: REMOTE
+      description: "CVE-2019-0708 — BlueKeep RDP pre-auth RCE. CVSS 9.8. Unauthenticated exploitation of Windows Remote Desktop Services on unpatched Windows 7/2008R2."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "BlueKeep RDP RCE (CVE-2019-0708) achieved — shell on target Windows workstation"
+      match_properties:
+        - Windows
+        - RDP
+        - Unpatched
+      probability: 0.75
+
+    - name: Solvability.DejaBlue
+      type: REMOTE
+      description: "CVE-2019-1182 — DejaBlue RDP RCE. CVSS 9.8. Critical pre-auth wormable vulnerability in Windows Remote Desktop Services affecting Windows 7/2008–2019."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "DejaBlue RDP RCE (CVE-2019-1182) achieved — alternate RDP shell on target workstation"
+      match_properties:
+        - Windows
+        - RDP
+        - Unpatched
+      probability: 0.65
+
+    - name: Solvability.RDP_RCE_1226
+      type: REMOTE
+      description: "CVE-2019-1226 — Windows Remote Desktop RCE. CVSS 9.8. Pre-auth code execution via malformed RDP packet before NLA authentication phase."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "RDP RCE (CVE-2019-1226) achieved — RDP pre-auth shell on Windows host"
+      match_properties:
+        - Windows
+        - RDP
+        - Unpatched
+      probability: 0.60
+
+    # ── SMB File Server exploits ──────────────────────────────────────────────
+    - name: Solvability.SMBGhost
+      type: REMOTE
+      description: "CVE-2020-0796 — SMBGhost wormable RCE in SMBv3. CVSS 10.0. Unauthenticated kernel-level code execution via malformed SMB3 compression header on Windows 1903/1909."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "SMBGhost wormable RCE (CVE-2020-0796) achieved — kernel shell on FileServer via SMBv3"
+      match_properties:
+        - Windows
+        - SMBv1
+        - FileServer
+      probability: 0.80
+
+    - name: Solvability.EternalBlue
+      type: REMOTE
+      description: "CVE-2017-0144 — EternalBlue NSA SMB exploit. CVSS 8.8. Unauthenticated RCE via malformed SMBv1 Trans2 request on Windows 7/2008/XP/2003."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "EternalBlue SMB RCE (CVE-2017-0144) achieved — SYSTEM shell on legacy Windows SMB target"
+      match_properties:
+        - Windows
+        - Win7
+        - SMBv1
+        - Unpatched
+      probability: 0.75
+
+    - name: Solvability.MS08_067
+      type: REMOTE
+      description: "CVE-2008-4250 — MS08-067 netapi32 RCE. CVSS 10.0. Classic SMB null-session exploit against unpatched legacy Windows file servers."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "MS08-067 SMB RCE (CVE-2008-4250) achieved — SYSTEM shell on legacy file server"
+      match_properties:
+        - Windows
+        - SMBv1
+        - FileServer
+        - SMB
+      probability: 0.55
+
+    # ── Print Server exploits ─────────────────────────────────────────────────
+    - name: Solvability.PrintNightmare
+      type: REMOTE
+      description: "CVE-2021-34527 — PrintNightmare Windows Print Spooler RCE. CVSS 8.8. Unauthenticated remote code execution via malicious printer driver DLL."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "PrintNightmare Print Spooler RCE (CVE-2021-34527) achieved — SYSTEM shell on PrintServer"
+      match_properties:
+        - Windows
+        - PrintSpooler
+        - Win2019
+      probability: 0.70
+
+    - name: Solvability.Spooler_RCE
+      type: REMOTE
+      description: "CVE-2021-36958 — Windows Print Spooler RCE. CVSS 7.8. Local/remote exploitation via spooler service malicious driver load."
+      cost: 1.5
+      success_rate: 0.78
+      reward: "Print Spooler RCE (CVE-2021-36958) achieved — privileged shell on PrintServer"
+      match_properties:
+        - Windows
+        - PrintSpooler
+        - Unpatched
+      probability: 0.65
+
+    # ── IIS / Exchange exploits ───────────────────────────────────────────────
+    - name: Solvability.IIS_RCE
+      type: REMOTE
+      description: "CVE-2022-21907 — IIS HTTP Protocol Stack RCE. CVSS 9.8. Unauthenticated kernel-level RCE via malformed HTTP/2 HEADERS frame on IIS 10 (Windows Server 2016/2019)."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "IIS HTTP Protocol Stack RCE (CVE-2022-21907) achieved — SYSTEM shell on IISServer"
+      match_properties:
+        - Windows
+        - IISServer
+        - WebServer
+      probability: 0.80
+
+    - name: Solvability.ProxyLogon
+      type: REMOTE
+      description: "CVE-2021-26855 — ProxyLogon SSRF on Exchange. CVSS 9.1. Pre-auth SSRF chains with CVE-2021-27065 (file write) for unauthenticated RCE on Exchange Server."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "ProxyLogon Exchange RCE (CVE-2021-26855) achieved — SYSTEM shell on ExchangeServer"
+      match_properties:
+        - Windows
+        - MailServer
+      probability: 0.85
+
+    - name: Solvability.ProxyShell
+      type: REMOTE
+      description: "CVE-2021-34473 — ProxyShell Exchange RCE. CVSS 9.1. Pre-auth RCE via SSRF + privilege escalation + arbitrary file write on Exchange 2013/2016/2019."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "ProxyShell Exchange RCE (CVE-2021-34473) achieved — alternate SYSTEM shell on ExchangeServer"
+      match_properties:
+        - Windows
+        - MailServer
+      probability: 0.70
+
+    - name: Solvability.Exchange_NTLM_Relay
+      type: REMOTE
+      description: "CVE-2024-21410 — Exchange NTLM relay amplification. CVSS 9.8. Relays NTLM credentials obtained from Exchange coercion to DC for privileged token."
+      cost: 1.5
+      success_rate: 0.90
+      reward: "Exchange NTLM relay (CVE-2024-21410) achieved — domain credentials relayed from ExchangeServer"
+      match_properties:
+        - Windows
+        - MailServer
+      probability: 0.65
+
+    # ── MSSQL exploits ────────────────────────────────────────────────────────
+    - name: Solvability.MSSQL_RCE_1
+      type: REMOTE
+      description: "CVE-2024-37338 — MSSQL Server RCE via memory corruption. CVSS 8.8. Authenticated remote code execution when attacker has db_owner or sysadmin role."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "MSSQL RCE (CVE-2024-37338) achieved — SQL Server process shell, SA privileges available"
+      match_properties:
+        - Windows
+        - MSSQLServer
+        - DatabaseServer
+      probability: 0.75
+
+    - name: Solvability.MSSQL_RCE_2
+      type: REMOTE
+      description: "CVE-2024-37340 — MSSQL Server second RCE variant. CVSS 8.8. Alternate memory corruption path for remote code execution on SQL Server 2019/2022."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "MSSQL RCE variant (CVE-2024-37340) achieved — alternate SQL Server shell path"
+      match_properties:
+        - Windows
+        - MSSQLServer
+        - DatabaseServer
+      probability: 0.60
+
+    # ── HyperV exploits ───────────────────────────────────────────────────────
+    - name: Solvability.HyperV_RCE
+      type: REMOTE
+      description: "CVE-2021-28476 — Hyper-V guest-to-host RCE. CVSS 9.9. Critical VM escape via malformed VMBus packet from a compromised guest VM to the HyperV host kernel."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "HyperV guest-to-host RCE (CVE-2021-28476) achieved — hypervisor host compromised, all guest VMs accessible"
+      match_properties:
+        - Windows
+        - HyperVHost
+      probability: 0.70
+
+    # ── Domain Controller exploits ────────────────────────────────────────────
+    - name: Solvability.SIGRed
+      type: REMOTE
+      description: "CVE-2020-1350 — SIGRed Windows DNS Server RCE. CVSS 10.0. Wormable unauthenticated RCE via malformed SIG DNS response targeting Windows DNS Server."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "SIGRed DNS RCE (CVE-2020-1350) achieved — SYSTEM shell on DomainController via DNS service"
+      match_properties:
+        - Windows
+        - DNSServer
+      probability: 0.75
+
+    - name: Solvability.DNS_RCE_1
+      type: REMOTE
+      description: "CVE-2021-26897 — Windows DNS Server RCE. CVSS 9.8. Heap overflow in Windows DNS Server AXFR zone transfer response processing."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "DNS Server RCE (CVE-2021-26897) achieved — SYSTEM shell on DomainController via DNS zone transfer"
+      match_properties:
+        - Windows
+        - DNSServer
+      probability: 0.65
+
+    - name: Solvability.RPC_RCE_2
+      type: REMOTE
+      description: "CVE-2022-26809 — Windows RPC Runtime RCE. CVSS 9.8. Pre-auth unauthenticated RCE via malformed RPC_REQUEST PDU on TCP port 135."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Windows RPC RCE (CVE-2022-26809) achieved — SYSTEM shell on domain-joined server via RPC"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.70
+
+    - name: Solvability.Kerberos_EOP_2
+      type: REMOTE
+      description: "CVE-2023-28244 — Windows Kerberos elevation of privilege. CVSS 8.1. Forged Kerberos TGS ticket used to escalate privileges against domain-joined services."
+      cost: 1.5
+      success_rate: 0.81
+      reward: "Kerberos EoP (CVE-2023-28244) achieved — domain privilege escalation via forged ticket"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainJoined
+      probability: 0.65
+
+    - name: Solvability.LDAP_AuthBypass
+      type: REMOTE
+      description: "CVE-2024-20674 — Windows LDAP authentication bypass. CVSS 8.8. Machine-in-the-middle LDAP negotiation to impersonate AD authentication service."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "LDAP auth bypass (CVE-2024-20674) achieved — domain controller LDAP service impersonated"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainJoined
+      probability: 0.60
+
+  credential_leak:
+    - name: Solvability.Mimikatz_LSASS
+      type: LOCAL
+      description: "Dump LSASS plaintext credentials using WDigest credential provider. Requires SeDebugPrivilege on the target Windows host with WDigest enabled."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "LSASS Mimikatz dump achieved — plaintext domain credentials extracted from memory"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - WDigest
+      probability: 0.70
+
+    - name: Solvability.Mimikatz_NTLM
+      type: LOCAL
+      description: "Dump NTLM password hashes from LSASS memory using Mimikatz sekurlsa::logonpasswords. Works on domain-joined Windows hosts."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "NTLM hash dump from LSASS achieved — domain user NTLM hashes obtained for relay/cracking"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.75
+
+    - name: Solvability.SAM_Dump
+      type: LOCAL
+      description: "Extract local SAM database hashes using reg save or Volume Shadow Copy on a local admin account. Reveals local administrator password hash."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "SAM database hashes extracted — local administrator NTLM hash obtained"
+      match_properties:
+        - Windows
+        - LocalAdmin
+      probability: 0.65
+
+    - name: Solvability.Kerberoasting
+      type: LOCAL
+      description: "Request TGS tickets for all Kerberoastable service accounts (SPNs) registered in AD. Offline NTLM cracking of TGS tickets reveals service account passwords."
+      cost: 1.0
+      success_rate: 0.60
+      reward: "Kerberoasting TGS tickets harvested — service account NTLM hashes obtained for offline cracking"
+      match_properties:
+        - Windows
+        - Kerberoastable
+        - DomainJoined
+      probability: 0.65
+
+    - name: Solvability.PassTheHash
+      type: LOCAL
+      description: "NTLM hash pass-the-hash lateral movement to adjacent domain-joined hosts lacking LAPS (same local admin password hash across machines)."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "Pass-the-Hash lateral movement succeeded — local admin session on neighbor host via NTLM hash"
+      match_properties:
+        - Windows
+        - NoLAPS
+        - DomainJoined
+      probability: 0.70
+
+    - name: Solvability.LSA_Secrets
+      type: LOCAL
+      description: "Extract LSA secrets from HKLM\\SECURITY\\Policy\\Secrets registry hive. Reveals service account passwords, cached domain credentials, and DPAPI master keys."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "LSA secrets extracted — service account passwords and cached credentials obtained from registry"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.65
+
+    - name: Solvability.HiveNightmare
+      type: LOCAL
+      description: "CVE-2021-36934 — HiveNightmare / SeriousSAM. Non-admin read access to SAM/SYSTEM/SECURITY hive files due to overly permissive ACLs on Volume Shadow Copies."
+      cost: 0.5
+      success_rate: 0.78
+      reward: "HiveNightmare SAM hive read (CVE-2021-36934) achieved — NTLM hashes extracted without admin rights"
+      match_properties:
+        - Windows
+        - LocalAdmin
+      probability: 0.60
+
+  discovery:
+    - name: Solvability.BloodHound_Recon
+      type: LOCAL
+      description: "BloodHound/SharpHound Active Directory enumeration. Maps all trust relationships, admin paths, Kerberoastable accounts, and shortest paths to Domain Admin."
+      cost: 1.0
+      success_rate: 0.80
+      reward: "BloodHound AD graph built — shortest path to DomainController identified, Kerberoastable accounts listed"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.85
+
+    - name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: "LDAP query for all AD users, groups, computers, GPOs, and service principal names (SPNs) in the domain."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "LDAP enumeration complete — full AD object inventory including domain computers and service accounts"
+      match_properties:
+        - Windows
+        - DomainController
+      probability: 0.80
+
+    - name: Solvability.SMB_ShareEnum
+      type: LOCAL
+      description: "Enumerate accessible SMB shares on domain-joined Windows file servers to identify sensitive data locations and admin shares."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "SMB share enumeration complete — accessible shares and admin shares mapped on FileServer"
+      match_properties:
+        - Windows
+        - FileServer
+        - SMBv1
+      probability: 0.75
+
+    - name: Solvability.Nmap_Internal
+      type: LOCAL
+      description: "Internal network host discovery scan to identify all live Windows hosts on the domain subnet including servers and workstations."
+      cost: 1.0
+      success_rate: 0.85
+      reward: "Internal network scan complete — all domain-joined hosts enumerated"
+      match_properties:
+        - Windows
+      probability: 0.80
+
+  goal_access:
+    - name: Solvability.DCSync
+      type: LOCAL
+      description: "DS-Replication-Get-Changes-All privilege abuse to dump all domain password hashes via Mimikatz dcsync. Requires DA or equivalent replication rights."
+      cost: 0.5
+      success_rate: 0.60
+      reward: "DCSync domain hash dump achieved — all NTLM hashes including krbtgt extracted from DomainController"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainAdmin
+      probability: 0.75
+
+    - name: Solvability.NTDS_Dump
+      type: LOCAL
+      description: "Extract NTDS.dit Active Directory database via Volume Shadow Copy (vssadmin create shadow) and SYSTEM hive for offline decryption of all domain hashes."
+      cost: 1.0
+      success_rate: 0.60
+      reward: "NTDS.dit extracted via VSS shadow copy — full domain hash database obtained"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainAdmin
+      probability: 0.70
+
+    - name: Solvability.GoldenTicket
+      type: LOCAL
+      description: "Forge a Kerberos Golden Ticket using the extracted krbtgt NTLM hash. Provides persistent domain admin access via forged TGTs valid for 10 years."
+      cost: 1.0
+      success_rate: 0.55
+      reward: "Golden Ticket forged with krbtgt hash — persistent domain admin Kerberos TGT created"
+      match_properties:
+        - Windows
+        - DomainController
+        - AdminCredentials
+      probability: 0.65
+
+    - name: Solvability.SQLDump_MSSQL
+      type: LOCAL
+      description: "xp_cmdshell / bulk export to exfiltrate all MSSQL database content including financial records and domain credential stores."
+      cost: 1.0
+      success_rate: 0.60
+      reward: "MSSQL full database dump achieved — financial records and application data exfiltrated"
+      match_properties:
+        - Windows
+        - MSSQLServer
+        - SensitiveData
+      probability: 0.70
+
+services:
+  # ── HQ VLANs ──────────────────────────────────────────────────────────────
+  SalesWorkstation:
+    port: RDP
+    value: 1000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - breach_node
+      - WDigest
+      - NoLAPS
+      - Unpatched
+    is_goal: false
+
+  FinanceWorkstation:
+    port: RDP
+    value: 1500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - NoLAPS
+      - FinancialData
+      - Unpatched
+    is_goal: false
+
+  RnDWorkstation:
+    port: RDP
+    value: 1500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - NoLAPS
+      - Unpatched
+    is_goal: false
+
+  AdminWorkstation:
+    port: RDP
+    value: 2500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - LocalAdmin
+      - AdminCredentials
+      - Unpatched
+    is_goal: false
+
+  # ── Server Farm ─────────────────────────────────────────────────────────────
+  FileServer:
+    port: SMB
+    value: 3500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - FileServer
+      - DomainJoined
+      - SMBv1
+      - SMB
+      - SensitiveData
+      - Unpatched
+    is_goal: false
+
+  PrintServer:
+    port: SMB
+    value: 2500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - PrintServer
+      - PrintSpooler
+      - DomainJoined
+      - Unpatched
+    is_goal: false
+
+  IISServer:
+    port: HTTPS
+    value: 3000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - IISServer
+      - WebServer
+      - DomainJoined
+      - Unpatched
+    is_goal: false
+
+  ExchangeServer:
+    port: HTTPS
+    value: 5000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - MailServer
+      - DomainJoined
+      - Unpatched
+    is_goal: false
+
+  MSSQLServer:
+    port: MSSQL
+    value: 6500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - MSSQLServer
+      - DatabaseServer
+      - DomainJoined
+      - SensitiveData
+      - Unpatched
+    is_goal: false
+
+  HyperVHost:
+    port: WinRM
+    value: 5500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2022
+      - HyperVHost
+      - DomainJoined
+      - Unpatched
+    is_goal: false
+
+  RDGateway:
+    port: RDP
+    value: 4000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2022
+      - IISServer
+      - WebServer
+      - DomainJoined
+      - Unpatched
+    is_goal: false
+
+  SharePointServer:
+    port: HTTPS
+    value: 4500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - IISServer
+      - WebServer
+      - DomainJoined
+      - SensitiveData
+      - Unpatched
+    is_goal: false
+
+  DomainController:
+    port: LDAP
+    value: 10000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2022
+      - DomainController
+      - DomainJoined
+      - DNSServer
+      - AD_KerberosKDC
+      - DomainAdmin
+      - AdminCredentials
+      - SensitiveData
+    is_goal: true
+
+domains:
+  - name: Z1_HQVLANs
+    subnet: 10.1.0.0/24
+    os_distribution:
+      Windows: 1.0
+    filler:
+      - SalesWorkstation
+      - FinanceWorkstation
+      - RnDWorkstation
+    mandatory_services:
+      - SalesWorkstation
+      - FinanceWorkstation
+      - RnDWorkstation
+      - AdminWorkstation
+    groups:
+      - name: SalesWorkstations
+        service: SalesWorkstation
+        min_count: 1
+        max_count: 1
+      - name: FinanceWorkstations
+        service: FinanceWorkstation
+        min_count: 15
+        max_count: 200
+      - name: RnDWorkstations
+        service: RnDWorkstation
+        min_count: 20
+        max_count: 300
+      - name: AdminWorkstations
+        service: AdminWorkstation
+        min_count: 5
+        max_count: 60
+    constraints:
+      - source: SalesWorkstations
+        target: breach_node
+        relation: MUST_HAVE
+      - source: SalesWorkstations
+        target: DomainJoined
+        relation: MUST_HAVE
+      - source: FinanceWorkstations
+        target: FinancialData
+        relation: MUST_HAVE
+      - source: FinanceWorkstations
+        target: DomainJoined
+        relation: MUST_HAVE
+      - source: AdminWorkstations
+        target: AdminCredentials
+        relation: MUST_HAVE
+      - source: SalesWorkstations
+        target: FinanceWorkstations
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: SalesWorkstations
+        target: RnDWorkstations
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: SalesWorkstations
+        target: AdminWorkstations
+        relation: MUST_CONNECT
+        protocol: SMB
+
+  - name: Z1_ServerFarm
+    subnet: 10.1.10.0/24
+    os_distribution:
+      Windows: 1.0
+    filler:
+      - FileServer
+    mandatory_services:
+      - FileServer
+      - PrintServer
+      - IISServer
+      - ExchangeServer
+      - MSSQLServer
+      - HyperVHost
+      - RDGateway
+      - SharePointServer
+      - DomainController
+    groups:
+      - name: FileServers
+        service: FileServer
+        min_count: 3
+        max_count: 40
+      - name: PrintServers
+        service: PrintServer
+        min_count: 2
+        max_count: 20
+      - name: IISServers
+        service: IISServer
+        min_count: 3
+        max_count: 40
+      - name: ExchangeServers
+        service: ExchangeServer
+        min_count: 2
+        max_count: 20
+      - name: MSSQLServers
+        service: MSSQLServer
+        min_count: 2
+        max_count: 30
+      - name: HyperVHosts
+        service: HyperVHost
+        min_count: 4
+        max_count: 50
+      - name: RDGateways
+        service: RDGateway
+        min_count: 2
+        max_count: 20
+      - name: SharePointServers
+        service: SharePointServer
+        min_count: 2
+        max_count: 20
+      - name: DomainControllers
+        service: DomainController
+        min_count: 2
+        max_count: 12
+    constraints:
+      - source: DomainControllers
+        target: AdminCredentials
+        relation: MUST_HAVE
+      - source: DomainControllers
+        target: DomainAdmin
+        relation: MUST_HAVE
+      - source: DomainControllers
+        target: SensitiveData
+        relation: MUST_HAVE
+      - source: FileServers
+        target: SMBv1
+        relation: MUST_HAVE
+      - source: FileServers
+        target: ExchangeServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: FileServers
+        target: MSSQLServers
+        relation: MUST_CONNECT
+        protocol: MSSQL
+      - source: ExchangeServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: IISServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: MSSQLServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: HyperVHosts
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: PrintServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+
+inter_domain_constraints:
+  - source_domain: Z1_HQVLANs
+    target_domain: Z1_ServerFarm
+    constraints:
+      - source: SalesWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: FinanceWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: RnDWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: AdminWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: SalesWorkstations
+        target: IISServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: FinanceWorkstations
+        target: MSSQLServers
+        relation: MUST_CONNECT
+        protocol: MSSQL
+
+entry_points:
+  - domain: Z1_HQVLANs
+    node: SalesWorkstations
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.55
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities
+
+credential_banks:
+  bank_types:
+    - guest
+    - domain_user
+    - local_admin
+    - admin
+    - service_admin
+    - domain_admin
+    - enterprise_admin
+    - krbtgt
+    - db_admin
+  categorization_rules:
+    - group_pattern: "Workstation"
+      banks: [guest, domain_user]
+    - group_pattern: "Admin"
+      banks: [local_admin, domain_user]
+    - group_pattern: "DomainController"
+      banks: [domain_admin, enterprise_admin, service_admin, admin, krbtgt]
+    - group_pattern: "MSSQL"
+      banks: [db_admin, admin]
+    - group_pattern: "FileServer"
+      banks: [admin, service_admin, domain_user]
+    - group_pattern: "Exchange"
+      banks: [service_admin, admin]
+    - properties: [Windows, WindowsServer]
+      banks: [local_admin, domain_user]
+    - properties: [DomainAdmin, AdminCredentials]
+      banks: [domain_admin, enterprise_admin]

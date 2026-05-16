@@ -1,0 +1,895 @@
+# =============================================================================
+# GOLDEN EXAMPLE: Hybrid Windows AD + Linux Microservices Enterprise
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   The most realistic enterprise environment: Active Directory on Windows for
+#   identity and infrastructure, Linux containers for application workloads.
+#   Four network zones — Linux WebTier (DMZ), mixed AppTier, mixed DataTier,
+#   and a CoreTier containing both the Windows DomainController and Keycloak.
+#   Both goals must be compromised (DC via DCSync, Keycloak via admin API dump)
+#   to model a complete identity provider takeover.
+#
+#   All CVE parameters from:
+#     - Windows:  data/vulnerability_db/windows_cves.json   (NVD API v2)
+#     - Linux:    data/vulnerability_db/bitnami_cves.json   (Trivy image scans)
+#   Formula: success_rate = cvss/10 × (0.7 if AC=HIGH), clamped [0.30, 0.90]
+#
+# ATTACKER PROGRESSION (primary chain — Windows path):
+#   1. Entry:    Nginx LibCrypto RCE (CVE-2025-15467, CVSS 9.8, SR=0.90)
+#                against the Linux reverse proxy. Unauthenticated shell.
+#   2. Pivot:    Jenkins env-var credential extraction → Vault token recovered.
+#   3. Escalate: Vault GoStdlib RCE (CVE-2024-41110, CVSS 9.9, SR=0.90)
+#                → Vault secrets dump includes AD service account password.
+#   4. Kerberoast: Stolen service account creds on AppServer (Windows)
+#                  → Kerberoast high-value SPN → DA hash.
+#   5. Goal A:   DCSync against DomainController (Windows, CVSS-derived SR=0.75)
+#                → NTLM hash of krbtgt + all domain accounts.
+#
+# ATTACKER PROGRESSION (secondary chain — Linux path):
+#   1. Entry:    IIS HTTP.sys Stack RCE (CVE-2021-31166, CVSS 9.8, SR=0.90)
+#                against Windows IIS in AppTier. Shell as SYSTEM.
+#   2. Harvest:  Read ASP.NET connection strings from web.config → MSSQL SA creds.
+#   3. Pivot:    Authenticate to MSSQLServer in DataTier. Enable xp_cmdshell.
+#   4. Escalate: PrintNightmare (CVE-2021-34527, CVSS 8.8, SR=0.88)
+#                on Windows WorkstationPool → local SYSTEM.
+#   5. Lateral:  NTLM relay via PetitPotam (CVE-2021-36942, CVSS 7.5, SR=0.75)
+#                → coerce DC auth → capture NTLMv2 → crack DA password.
+#   6. Goal A:   DCSync the DomainController.
+#   7. Goal B:   Keycloak admin API dump using stolen Vault-issued Keycloak creds
+#                (shared with primary chain).
+#
+# DESIGN DECISIONS:
+#   - WebTier is Linux-only. AppTier is mixed (Linux Jenkins + Windows IIS).
+#   - DataTier is mixed (Linux MongoDB/Keycloak-DB + Windows MSSQL).
+#   - CoreTier has two goals: Windows DomainController and Linux KeycloakServer.
+#     The agent must compromise both to win (num_goals: 2, selection_strategy: diverse).
+#   - No WebTier → CoreTier direct path (strict inter_domain_constraints).
+#   - AppTier is the mandatory pivot for both chains.
+#   - ZeroLogon (CVE-2020-1472) excluded: NVD CVSS 5.4 (MEDIUM) after 2021 revision.
+#     Use PrintNightmare + PetitPotam instead for DC escalation.
+#   - EternalBlue excluded from AppTier (SMBv1 disabled on Win2019). Use IIS RCE instead.
+#   - max_total_nodes: 120 — large enterprise scenario for curriculum learning.
+# =============================================================================
+
+config:
+  min_total_nodes: 45
+  max_total_nodes: 120
+  goal_config:
+    num_goals: 2
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - HTTPS
+    - HTTP
+    - SSH
+    - RDP
+    - LDAP
+    - LDAPS
+    - MySQL
+    - MSSQL
+    - MongoDB
+    - SMB
+    - Kerberos
+    - WinRM
+    - VaultAPI
+    - JenkinsHTTPS
+    - KeycloakHTTPS
+  standard_ports_extra:
+    - DNS
+    - ICMP
+    - NTP
+    - AMQP
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # Operating Systems
+    - Windows
+    - Linux
+    - Debian
+    - Alpine
+    - Win2019
+    - Win2022
+    # Node roles (Linux)
+    - WebServer
+    - AppServer
+    - DatabaseServer
+    - AuthServer
+    # Node roles (Windows)
+    - DomainController
+    - FileServer
+    - IISServer
+    - MSSQLServer
+    - WorkstationRole
+    # CVE-backed Linux properties (bitnami)
+    - GoRuntime
+    - LibCrypto
+    - Java
+    # CVE-backed Windows properties (NVD)
+    - SMBv1
+    - PrintSpooler
+    - DomainJoined
+    - NoLAPS
+    - WDigest
+    # Service-specific
+    - MongoDB
+    - KeycloakService
+    # Security / access markers
+    - SensitiveData
+    - AdminCredentials
+    - ServiceToken
+    - DomainAdmin
+    - ADServiceAccount
+    - IdentityData
+    - Misconfigured
+    - Unpatched
+    - Patched
+
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.70
+  properties:
+    - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+    - HTTPS
+    - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.10
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Recon.TLSAndBanner
+      type: LOCAL
+      description: "HTTP/TLS fingerprinting and Shodan-style recon to identify the Nginx reverse proxy version, certificate SANs, and exposed virtual hosts (Linux web tier and any Windows IIS vhosts)."
+      cost: 0.5
+      success_rate: 0.95
+      reward: "Nginx reverse proxy and exposed IIS virtual hosts identified — TLS fingerprint, OpenSSL version, and OS banners enumerated"
+    credential_leak:
+      name: External.Recon.GitExposure
+      type: LOCAL
+      description: "Scans for exposed .git directories, debug pages, and phpinfo.php. May recover a partial Vault token from misconfigured Nginx stub_status or a Jenkins API token from an exposed build log."
+      cost: 1.5
+      success_rate: 0.48
+      reward: "Exposed debug endpoint leaked partial Vault token and internal AppTier hostname"
+
+attack_flow:
+  # Linux WebTier → AppTier (both Linux Jenkins and Windows IIS)
+  - source_pattern: NginxProxy
+    targets:
+      - JenkinsServer
+      - IISServer
+  # Linux AppTier pivots
+  - source_pattern: JenkinsServer
+    targets:
+      - VaultServer
+      - AppServerWindows
+  # Windows AppTier pivots
+  - source_pattern: IISServer
+    targets:
+      - AppServerWindows
+      - MSSQLServer
+  - source_pattern: AppServerWindows
+    targets:
+      - VaultServer
+      - DomainController
+      - KeycloakServer
+  # DataTier pivots
+  - source_pattern: VaultServer
+    targets:
+      - MongoDBServer
+      - MSSQLServer
+      - KeycloakServer
+  - source_pattern: MSSQLServer
+    targets:
+      - DomainController
+  - source_pattern: MongoDBServer
+    targets:
+      - KeycloakServer
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.MultiOS.CredExtract
+    type: LOCAL
+    description: "Linux: reads container env vars, /etc/vault-agent/, .env, web.config. Windows: reads DPAPI-protected credential blobs, LSASS dump, LSA secrets from registry (HKLM\\SECURITY). Both: checks config files for hardcoded service account passwords."
+    cost: 1.0
+    success_rate: 0.65
+    reward: "Service credential extracted (env var / DPAPI / config file) — lateral access to {target} enabled"
+    node_probability: 0.55
+    target_coverage: 0.40
+    min_targets: 1
+    default_port: HTTPS
+  leak_neighbors:
+    name: Local.MultiOS.NetScan
+    type: LOCAL
+    description: "Linux: nmap container overlay network. Windows: net view, arp -a, PowerShell Get-ADComputer. Both identify reachable services by port across all network tiers."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Network scan revealed adjacent service {target} — IP address, open ports, and OS type identified"
+    node_probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Identifies a Linux host via SSH banner, HTTP server headers (Nginx/OpenSSL/Java version strings), and TLS certificate SAN fields."
+    cost: 0.5
+    success_rate: 0.95
+  - name: Remote.Probe.Windows
+    os: Windows
+    type: REMOTE
+    description: "Identifies a Windows host via SMB negotiation response (OS version in Negotiate Protocol Response), RDP CredSSP negotiation banner, and HTTP Server: Microsoft-IIS header."
+    cost: 0.5
+    success_rate: 0.90
+
+solvability_vulnerabilities:
+  remote_access:
+    # ── WebTier: Nginx LibCrypto (Linux) ─────────────────────────────────────
+    - name: Solvability.Nginx_LibCrypto_Critical
+      type: REMOTE
+      description: "CVE-2025-15467 Critical libcrypto3 RCE in Nginx — malformed TLS ClientHello triggers arbitrary code execution. CVSS 9.8, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Nginx libcrypto RCE (CVE-2025-15467) achieved — unauthenticated Linux shell on public reverse proxy"
+      match_properties:
+        - Linux
+        - WebServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.85
+
+    # ── AppTier: IIS HTTP.sys Stack (Windows) ────────────────────────────────
+    - name: Solvability.IIS_HTTP_Stack
+      type: REMOTE
+      description: "CVE-2021-31166 Critical HTTP Protocol Stack RCE in Windows IIS — malformed Accept-Encoding header triggers worm-capable kernel RCE (SYSTEM). CVSS 9.8, AC=LOW. SR=0.90 per CVE formula. Source: windows_cves.json."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "IIS HTTP.sys RCE (CVE-2021-31166) achieved — SYSTEM shell on Windows IIS server, web.config and app pool credentials readable"
+      match_properties:
+        - Windows
+        - IISServer
+        - Unpatched
+      probability: 0.85
+
+    # ── AppTier: Jenkins OpenJDK RCE (Linux) ─────────────────────────────────
+    - name: Solvability.Jenkins_OpenJDK_RCE
+      type: REMOTE
+      description: "CVE-2025-50059 High-severity OpenJDK RCE in Jenkins — Java deserialization via Remoting protocol. CVSS 8.6, AC=LOW. SR=0.86 per CVE formula."
+      cost: 1.5
+      success_rate: 0.86
+      reward: "Jenkins OpenJDK RCE (CVE-2025-50059) achieved — CI/CD server shell, all pipeline credentials and Vault tokens accessible"
+      match_properties:
+        - Linux
+        - AppServer
+        - Java
+        - Unpatched
+      probability: 0.65
+
+    # ── AppTier: PrintNightmare (Windows Workstations) ────────────────────────
+    - name: Solvability.PrintNightmare
+      type: REMOTE
+      description: "CVE-2021-34527 High-severity Windows Print Spooler RCE — loads malicious DLL via UNC path, elevates to SYSTEM. CVSS 8.8, AC=LOW. SR=0.88 per CVE formula. Source: windows_cves.json."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "PrintNightmare (CVE-2021-34527) achieved — SYSTEM on Windows AppServer, LSASS dumpable for DA credential extraction"
+      match_properties:
+        - Windows
+        - PrintSpooler
+        - DomainJoined
+        - Unpatched
+      probability: 0.65
+
+    # ── AppTier: Vault GoStdlib RCE (Linux) ──────────────────────────────────
+    - name: Solvability.Vault_GoStdlib
+      type: REMOTE
+      description: "CVE-2024-41110 Critical Go stdlib RCE in HashiCorp Vault — arbitrary code execution via crafted HTTP/2 frame. CVSS 9.9, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Vault Go stdlib RCE (CVE-2024-41110) achieved — secrets manager shell, all KV paths accessible including AD service account and Keycloak admin password"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - Unpatched
+      probability: 0.85
+
+    # ── DataTier: MSSQL Remote Exploits (Windows) ────────────────────────────
+    - name: Solvability.MSSQL_RCE
+      type: REMOTE
+      description: "CVE-2024-38088 Critical MSSQL RCE — unauthenticated remote code execution via crafted TDS protocol packet. CVSS 9.8, AC=LOW. SR=0.90 per CVE formula. Source: windows_cves.json."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "MSSQL RCE (CVE-2024-38088) achieved — SYSTEM on database server, xp_cmdshell enabled, SA credentials and linked server configs readable"
+      match_properties:
+        - Windows
+        - MSSQLServer
+        - Unpatched
+      probability: 0.80
+
+    # ── DataTier: PetitPotam NTLM Coercion (Windows) ─────────────────────────
+    - name: Solvability.PetitPotam
+      type: REMOTE
+      description: "CVE-2021-36942 High-severity Windows NTLM relay via EfsRpcOpenFileRaw — coerces DC to authenticate to attacker responder, captures NTLMv2 hash. CVSS 7.5, AC=LOW. SR=0.75 per CVE formula. Source: windows_cves.json."
+      cost: 2.0
+      success_rate: 0.75
+      reward: "PetitPotam (CVE-2021-36942) coercion successful — DomainController NTLMv2 hash captured and relayed, DA-level access obtained"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - Unpatched
+      probability: 0.65
+
+    # ── CoreTier: Keycloak SSRF (Linux) ──────────────────────────────────────
+    - name: Solvability.Keycloak_SSRF
+      type: REMOTE
+      description: "CVE-2026-1486 High-severity SSRF in Keycloak identity broker — forged redirect URI triggers SSRF to admin REST API, bypassing authentication. CVSS 8.8, AC=LOW. SR=0.88 per CVE formula."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "Keycloak SSRF (CVE-2026-1486) achieved — identity server admin API accessible, realm user export possible"
+      match_properties:
+        - Linux
+        - AuthServer
+        - Java
+        - KeycloakService
+        - Unpatched
+      probability: 0.65
+
+    # ── CoreTier: noPac AD Privilege Escalation (Windows) ────────────────────
+    - name: Solvability.noPac
+      type: REMOTE
+      description: "CVE-2021-42287 High-severity AD privesc — SAM-Account-Name spoofing to impersonate DC and request a Kerberos service ticket for CIFS/DC — domain compromise via low-privilege domain user. CVSS 7.5, AC=LOW. SR=0.75 per CVE formula. Source: windows_cves.json."
+      cost: 2.0
+      success_rate: 0.75
+      reward: "noPac (CVE-2021-42287) escalation achieved — domain admin Kerberos TGT forged, DomainController fully accessible"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainJoined
+        - Unpatched
+      probability: 0.60
+
+  credential_leak:
+    # Linux Jenkins credential store
+    - name: Solvability.Jenkins_CredentialStore
+      type: LOCAL
+      description: "Reads Jenkins credentials.xml and secrets/ master.key from a compromised CI server. Contains Vault tokens, AD service account passwords, and Kubernetes JWTs stored by pipeline jobs."
+      cost: 1.0
+      success_rate: 0.72
+      reward: "Jenkins credential store decrypted — Vault token and AD service account password recovered for AppTier and CoreTier pivot"
+      match_properties:
+        - Linux
+        - AppServer
+        - Java
+      probability: 0.65
+      target_coverage: 0.45
+      min_targets: 1
+
+    # Vault secrets dump (cross-platform pivot)
+    - name: Solvability.VaultSecretsDump
+      type: LOCAL
+      description: "Authenticates to Vault using stolen service token, dumps all KV secret engines: AD service account passwords, Keycloak admin credentials, MSSQL SA password, and MongoDB URIs."
+      cost: 1.5
+      success_rate: 0.62
+      reward: "Vault secrets engine fully dumped — AD service account, Keycloak admin password, MSSQL SA creds, and MongoDB URI recovered"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - ServiceToken
+      probability: 0.60
+      target_coverage: 0.55
+      min_targets: 2
+
+    # Windows LSASS credential dump (post-PrintNightmare)
+    - name: Solvability.LSASS_Dump
+      type: LOCAL
+      description: "Dumps LSASS process memory using Mimikatz or Task Manager on a Windows AppServer with SYSTEM privileges (post-PrintNightmare). Extracts NTLM hashes and Kerberos TGTs for domain accounts."
+      cost: 1.5
+      success_rate: 0.68
+      reward: "LSASS dump successful — NTLM hashes for domain accounts including ADServiceAccount and DomainAdmin recovered"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - WDigest
+        - NoLAPS
+      probability: 0.65
+      target_coverage: 0.45
+      min_targets: 1
+
+    # Windows web.config extraction (IIS post-exploit)
+    - name: Solvability.WebConfig_CredExtract
+      type: LOCAL
+      description: "Reads C:\\inetpub\\wwwroot\\web.config from a compromised IIS server. Contains SQL Server connection strings with SA password and optional AD service account credentials for Windows Authentication pools."
+      cost: 0.5
+      success_rate: 0.78
+      reward: "web.config read — MSSQL SA connection string and optional AD service account credentials recovered"
+      match_properties:
+        - Windows
+        - IISServer
+        - DomainJoined
+      probability: 0.70
+      target_coverage: 0.50
+      min_targets: 1
+
+    # Kerberoasting (from any domain-joined Windows node)
+    - name: Solvability.Kerberoasting
+      type: LOCAL
+      description: "Requests Kerberos service tickets (TGS) for all SPNs in the domain using a low-privilege domain account. Cracks RC4-encrypted TGS offline to recover plaintext service account passwords (DA-linked SPNs)."
+      cost: 2.0
+      success_rate: 0.62
+      reward: "Kerberoasting successful — high-privilege AD service account password cracked, DomainAdmin path unlocked"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - ADServiceAccount
+      probability: 0.60
+      target_coverage: 0.40
+      min_targets: 1
+
+    # MongoDB unauthenticated (default config)
+    - name: Solvability.MongoDB_NoAuth
+      type: LOCAL
+      description: "Connects to MongoDB using default --bind_ip_all configuration with no authentication. Standard MongoDB ships without auth enabled. Enumerates all databases including Keycloak realm data."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "MongoDB unauthenticated connection — Keycloak realm database enumerated, user hashes visible"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - MongoDB
+        - Misconfigured
+      probability: 0.65
+      target_coverage: 0.50
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.ADEnum
+      type: LOCAL
+      description: "Runs BloodHound/SharpHound from a domain-joined Windows node to enumerate all AD objects: users, groups, GPOs, ACLs, Kerberoastable accounts, and paths to Domain Admins."
+      cost: 1.0
+      success_rate: 0.82
+      reward: "Active Directory enumeration complete — BloodHound attack paths to DomainAdmin identified, Kerberoastable SPNs listed"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.75
+      target_coverage: 0.55
+      min_targets: 2
+
+    - name: Solvability.LinuxClusterEnum
+      type: LOCAL
+      description: "Runs nmap on cluster overlay network from a compromised Linux container. Identifies all reachable service endpoints across AppTier, DataTier, and CoreTier subnets."
+      cost: 0.5
+      success_rate: 0.88
+      reward: "Cross-tier network enumeration complete — all service endpoints and OS types mapped across AppTier, DataTier, and CoreTier"
+      match_properties:
+        - Linux
+        - WebServer
+      probability: 0.80
+      target_coverage: 0.55
+      min_targets: 2
+
+  goal_access:
+    # Goal A: Windows DomainController DCSync
+    - name: Solvability.DCSync
+      type: LOCAL
+      description: "Executes DCSync attack from a compromised domain admin context — replicates the NTDS.DIT database from the DomainController using MS-DRSR protocol. Recovers NTLM hash of krbtgt and all domain accounts."
+      cost: 2.0
+      success_rate: 0.62
+      reward: "DCSync attack successful — krbtgt NTLM hash and all domain account hashes exfiltrated from DomainController"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainAdmin
+      probability: 0.70
+      goal_category: dump
+
+    # Goal B: Linux Keycloak identity dump
+    - name: Solvability.Keycloak_IdentityDump
+      type: LOCAL
+      description: "Authenticates to Keycloak admin REST API using stolen admin credentials (from Vault dump). Exports all realm users, groups, OAuth2 client secrets, and OIDC signing keys. Complete identity provider compromise."
+      cost: 2.0
+      success_rate: 0.55
+      reward: "Keycloak identity provider fully compromised — all realm users, OAuth2 client secrets, and OIDC signing keys exfiltrated"
+      match_properties:
+        - Linux
+        - AuthServer
+        - KeycloakService
+        - AdminCredentials
+        - IdentityData
+      probability: 0.65
+      goal_category: dump
+
+services:
+  # ── Web Tier (Linux) ────────────────────────────────────────────────────────
+  NginxProxy:
+    port: HTTPS
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Alpine
+      - WebServer
+      - LibCrypto
+      - ServiceToken
+      - Unpatched
+    is_goal: false
+
+  # ── App Tier: Linux ──────────────────────────────────────────────────────────
+  JenkinsServer:
+    port: JenkinsHTTPS
+    value: 1000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AppServer
+      - Java
+      - ServiceToken
+      - Unpatched
+    is_goal: false
+
+  VaultServer:
+    port: VaultAPI
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AppServer
+      - GoRuntime
+      - ServiceToken
+      - AdminCredentials
+      - Unpatched
+    is_goal: false
+
+  # ── App Tier: Windows ────────────────────────────────────────────────────────
+  IISServer:
+    port: HTTPS
+    value: 800
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - IISServer
+      - DomainJoined
+      - ADServiceAccount
+      - Unpatched
+    is_goal: false
+
+  AppServerWindows:
+    port: WinRM
+    value: 1200
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - DomainJoined
+      - PrintSpooler
+      - WDigest
+      - NoLAPS
+      - ADServiceAccount
+      - Unpatched
+    is_goal: false
+
+  # ── Data Tier: Linux ─────────────────────────────────────────────────────────
+  MongoDBServer:
+    port: MongoDB
+    value: 3000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - DatabaseServer
+      - MongoDB
+      - GoRuntime
+      - SensitiveData
+      - Misconfigured
+      - Unpatched
+    is_goal: false
+
+  # ── Data Tier: Windows ───────────────────────────────────────────────────────
+  MSSQLServer:
+    port: MSSQL
+    value: 4000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - MSSQLServer
+      - DatabaseServer
+      - DomainJoined
+      - SensitiveData
+      - Unpatched
+    is_goal: false
+
+  # ── Core Tier: Linux (Goal B) ────────────────────────────────────────────────
+  KeycloakServer:
+    port: KeycloakHTTPS
+    value: 10000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AuthServer
+      - Java
+      - KeycloakService
+      - AdminCredentials
+      - IdentityData
+      - Unpatched
+    is_goal: true
+
+  # ── Core Tier: Windows (Goal A) ──────────────────────────────────────────────
+  DomainController:
+    port: LDAP
+    value: 15000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2022
+      - DomainController
+      - DomainJoined
+      - DomainAdmin
+      - Unpatched
+    is_goal: true
+
+domains:
+  - name: WebTier
+    subnet: 10.0.1.0/24
+    filler:
+      - NginxProxy
+    mandatory_services:
+      - NginxProxy
+    groups:
+      - name: NginxProxies
+        service: NginxProxy
+        min_count: 2
+        max_count: 6
+    constraints:
+      - source: NginxProxies
+        target: Unpatched
+        relation: MUST_HAVE
+
+  - name: AppTier
+    subnet: 10.0.2.0/24
+    filler:
+      - AppServerWindows
+    mandatory_services:
+      - JenkinsServer
+      - VaultServer
+      - IISServer
+      - AppServerWindows
+    groups:
+      - name: JenkinsServers
+        service: JenkinsServer
+        min_count: 1
+        max_count: 3
+      - name: VaultServers
+        service: VaultServer
+        min_count: 1
+        max_count: 2
+      - name: IISServers
+        service: IISServer
+        min_count: 1
+        max_count: 4
+      - name: WindowsAppServers
+        service: AppServerWindows
+        min_count: 2
+        max_count: 8
+    constraints:
+      - source: JenkinsServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: VaultServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: IISServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: WindowsAppServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: WindowsAppServers
+        target: PrintSpooler
+        relation: MUST_HAVE
+      # Jenkins holds Vault tokens
+      - source: JenkinsServers
+        target: VaultServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: VaultAPI
+      - source: JenkinsServers
+        target: VaultServers
+        relation: MUST_CONNECT
+        protocol: VaultAPI
+      # Windows AppServers are domain-joined — Kerberoasting pivot
+      - source: WindowsAppServers
+        target: VaultServers
+        relation: MUST_REACH
+        protocol: VaultAPI
+      # IIS → Windows AppServer lateral movement
+      - source: IISServers
+        target: WindowsAppServers
+        relation: MUST_REACH
+        protocol: WinRM
+      - source: IISServers
+        target: WindowsAppServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: WinRM
+
+  - name: DataTier
+    subnet: 10.0.3.0/24
+    filler:
+      - MongoDBServer
+    mandatory_services:
+      - MongoDBServer
+      - MSSQLServer
+    groups:
+      - name: MongoDBServers
+        service: MongoDBServer
+        min_count: 1
+        max_count: 3
+      - name: MSSQLServers
+        service: MSSQLServer
+        min_count: 1
+        max_count: 4
+    constraints:
+      - source: MongoDBServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: MongoDBServers
+        target: Misconfigured
+        relation: MUST_HAVE
+      - source: MSSQLServers
+        target: Unpatched
+        relation: MUST_HAVE
+      # MSSQL carries credentials to DomainController (xp_cmdshell → SA → coerce auth)
+      - source: MSSQLServers
+        target: MongoDBServers
+        relation: KNOWS
+
+  - name: CoreTier
+    subnet: 10.1.1.0/24
+    filler: []
+    mandatory_services:
+      - KeycloakServer
+      - DomainController
+    groups:
+      - name: KeycloakServers
+        service: KeycloakServer
+        min_count: 1
+        max_count: 2
+      - name: DomainControllers
+        service: DomainController
+        min_count: 1
+        max_count: 2
+    constraints:
+      - source: KeycloakServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: DomainControllers
+        target: Unpatched
+        relation: MUST_HAVE
+      # DC issues Kerberos tickets to Keycloak — federated identity path
+      - source: DomainControllers
+        target: KeycloakServers
+        relation: MUST_REACH
+        protocol: KeycloakHTTPS
+
+inter_domain_constraints:
+  # WebTier → AppTier (HTTPS/REST only — strict)
+  - source_domain: WebTier
+    target_domain: AppTier
+    constraints:
+      - source: NginxProxies
+        target: IISServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: NginxProxies
+        target: JenkinsServers
+        relation: MUST_CONNECT
+        protocol: JenkinsHTTPS
+      - source: NginxProxies
+        target: JenkinsServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: JenkinsHTTPS
+
+  # AppTier → DataTier (port-specific only)
+  - source_domain: AppTier
+    target_domain: DataTier
+    constraints:
+      - source: VaultServers
+        target: MongoDBServers
+        relation: CLIENT_OF
+        protocol: MongoDB
+      - source: VaultServers
+        target: MongoDBServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MongoDB
+      - source: VaultServers
+        target: MSSQLServers
+        relation: CLIENT_OF
+        protocol: MSSQL
+      - source: VaultServers
+        target: MSSQLServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MSSQL
+      - source: IISServers
+        target: MSSQLServers
+        relation: MUST_CONNECT
+        protocol: MSSQL
+      - source: IISServers
+        target: MSSQLServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MSSQL
+
+  # AppTier → CoreTier (Kerberos/LDAP and HTTPS only)
+  - source_domain: AppTier
+    target_domain: CoreTier
+    constraints:
+      - source: WindowsAppServers
+        target: DomainControllers
+        relation: CLIENT_OF
+        protocol: Kerberos
+      - source: WindowsAppServers
+        target: DomainControllers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: LDAP
+      - source: VaultServers
+        target: KeycloakServers
+        relation: MUST_CONNECT
+        protocol: KeycloakHTTPS
+      - source: VaultServers
+        target: KeycloakServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: KeycloakHTTPS
+
+  # DataTier → CoreTier (MSSQL xp_cmdshell → coerce DC auth)
+  - source_domain: DataTier
+    target_domain: CoreTier
+    constraints:
+      - source: MSSQLServers
+        target: DomainControllers
+        relation: MUST_REACH
+        protocol: LDAP
+      - source: MSSQLServers
+        target: DomainControllers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: LDAP
+      - source: MongoDBServers
+        target: KeycloakServers
+        relation: MUST_REACH
+        protocol: KeycloakHTTPS
+
+entry_points:
+  - domain: WebTier
+    node: NginxProxies
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.55
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

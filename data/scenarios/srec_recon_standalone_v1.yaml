@@ -1,0 +1,1201 @@
+# =============================================================================
+# S-REC-01: Enterprise Credential Graph Traversal — Standalone Specialist Training
+# Agent: S_Lateral
+# Zones: Z4 (10.0.1.0/24) + Z6 (10.3.0.0/24) + Z1 (10.1.0.0/24, 10.1.10.0/24)
+# Architecture: Single flat domain (all zones — no inter_domain_constraints)
+# Terminal goal: AdminWorkstation (value 10000, is_goal: true)
+# Nodes: 75–800
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   S_Recon has NO remote_access RCE solvability entries.
+#   Compromise is entirely credential-chain based:
+#     Z4 network SNMP/config → Z6 cloud IAM/container secrets → Z1 Windows creds
+#   The ISPRouter group is the pre-owned breach node modeling the initial internet
+#   foothold; all subsequent access is via LEAK_KNOWN_CREDENTIALS propagation.
+#
+# ATTACK PATH (credential graph traversal):
+#   1. Breach ISPRouter (SR 1.0 trivial — models initial internet scan foothold)
+#   2. SNMP_Walk (SR 0.70) / SNMP_CommunityDump (SR 0.70) on network devices
+#      → ARP table dump → KNOWS Z6 cloud node IPs
+#   3. ConfigBackup_Exfil (SR 0.65) on CiscoEdgeRouter → SNMP community string
+#      → LEAK_KNOWN_CREDENTIALS to Z6 AWSWebServers
+#   4. AWS_IMDSv1 (SR 0.85) on AWSAppServer → IAM role temp credentials
+#      → LEAK_KNOWN_CREDENTIALS to AWSRedis
+#   5. Redis_NoAuth (SR 0.80) + Container_EnvVars (SR 0.60) on AWSRedis
+#      → DB credentials → LEAK_KNOWN_CREDENTIALS to Z1 SalesWorkstations
+#   6. LDAP_AnonymousBind (SR 0.65) + DNS_ZoneTransfer (SR 0.55) on DomainController
+#      → SPN list, all Z1 hostnames → KNOWS AdminWorkstation/FileServer
+#   7. GPP_Password_Decryption (SR 0.70) on DomainController/FileServer (SYSVOL)
+#      → plaintext domain credential → LEAK to AdminWorkstation
+#   8. Mimikatz_LSASS (SR 0.70) on DomainController → cleartext DA credentials
+#      → LEAK_KNOWN_CREDENTIALS to AdminWorkstation → TERMINAL GOAL
+#
+# REWARD STRUCTURE (shaped):
+#   +300  per new credential added to credential store (credential_leak actions)
+#   +150  per new node revealed via KNOWS constraint
+#   +1200 per zone boundary crossed for the first time (Z4→Z6, Z6→Z1)
+#   +10000 terminal goal (AdminWorkstation owned)
+#   These are approximated via node values: Z4=300, Z6=600, Z1=900, Goal=10000
+#
+# DEPTH: ISPRouter → CiscoEdgeRouter → AWSWebServer → AWSAppServer → AWSRedis
+#   → SalesWorkstation → DomainController → AdminWorkstation = 7 hops ✓
+# =============================================================================
+
+config:
+  min_total_nodes: 75
+  max_total_nodes: 800
+  goal_config:
+    num_goals: 1
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - RDP
+    - SMB
+    - HTTPS
+    - HTTP
+    - LDAP
+    - SSH
+    - WinRM
+    - Redis
+    - MSSQL
+    - SNMP
+    - Kerberos
+  standard_ports_extra:
+    - DNS
+    - NTP
+    - SMTP
+    - BGP
+    - OSPF
+    - Kafka
+    - AMQP
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # OS families
+    - Windows
+    - WindowsServer
+    - Win2019
+    - Win2022
+    - Win10
+    - Linux
+    # Network device roles
+    - NetworkDevice
+    - Router
+    - Firewall
+    - Switch
+    - NGFW
+    # Network device OS
+    - CiscoNXOS
+    - CiscoIOS
+    # Domain membership
+    - DomainJoined
+    - DomainController
+    - DomainAdmin
+    - LocalAdmin
+    # Node roles
+    - WorkStation
+    - FileServer
+    - MailServer
+    - WebServer
+    - AppServer
+    - WorkerNode
+    - DatabaseServer
+    - MSSQLServer
+    - AuthServer
+    # Cloud / container
+    - Pod
+    - Kubernetes
+    - Redis
+    - MongoDB
+    # Auth / PKI
+    - KeycloakService
+    - AD_KerberosKDC
+    - DNSServer
+    - LDAP
+    # Runtime environments
+    - Java
+    - GoRuntime
+    - Python
+    - PHP
+    - WordPressInstall
+    # Vulnerability properties
+    - SNMP
+    - Misconfigured
+    - DefaultCredentials
+    - SMBv1
+    - SMB
+    - WDigest
+    - NoLAPS
+    - FinancialData
+    - SensitiveData
+    - AdminCredentials
+    - SSHKey
+    - BGP
+    - OSPF
+
+os_management_ports:
+  Linux: SSH
+  Windows: RDP
+  WindowsServer: RDP
+  NetworkDevice: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.1
+  properties:
+    - breach_node
+  default_entry_port: SSH
+  preferred_entry_ports:
+    - SSH
+    - HTTPS
+    - SNMP
+  entry_node_count: 1
+  leaked_node_coverage: 0.15
+  min_leaked_nodes: 3
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Recon.InternetScan
+      type: LOCAL
+      description: "Passive and active internet reconnaissance — DNS brute-force, Shodan/Censys queries, BGP route enumeration, and SNMP probing with common community strings (public/private/internal). Maps exposed network device management interfaces and cloud-facing endpoints for GLOBALTECH AS."
+      cost: 0.5
+      success_rate: 0.90
+      reward: "GLOBALTECH internet surface mapped — exposed SNMP management interfaces, BGP peer IPs, and cloud-facing endpoints enumerated from internet"
+    credential_leak:
+      name: External.Recon.SNMPProbe
+      type: LOCAL
+      description: "SNMP v1/v2c community string probe with wordlist of default community strings (public, private, internal, cisco, network, admin). Successful SNMP GET request on edge routers returns MIB-II system data including interface IPs, ARP tables, and routing neighbor information."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "SNMP community string found on network device — ARP table and routing table accessible, adjacent Z4 device IPs and network credentials leaked"
+
+attack_flow:
+  - source_pattern: ISPRouter
+    targets:
+      - CiscoEdgeRouter
+      - PaloAltoFirewall
+      - WAFAppliance
+  - source_pattern: CiscoEdgeRouter
+    targets:
+      - AWSWebServer
+      - AWSAppServer
+      - AWSJenkins
+  - source_pattern: PaloAltoFirewall
+    targets:
+      - AWSWebServer
+      - CiscoEdgeRouter
+  - source_pattern: WAFAppliance
+    targets:
+      - AWSWebServer
+      - AWSAuthServer
+  - source_pattern: AWSWebServer
+    targets:
+      - AWSAppServer
+      - AWSRedis
+      - AWSAuthServer
+      - AWSJenkins
+  - source_pattern: AWSAppServer
+    targets:
+      - AWSRedis
+      - AWSJenkins
+  - source_pattern: AWSRedis
+    targets:
+      - SalesWorkstation
+      - FinanceWorkstation
+  - source_pattern: AWSAuthServer
+    targets:
+      - SalesWorkstation
+      - AdminWorkstation
+  - source_pattern: AWSJenkins
+    targets:
+      - DomainController
+      - FileServer
+  - source_pattern: SalesWorkstation
+    targets:
+      - DomainController
+      - FileServer
+  - source_pattern: FinanceWorkstation
+    targets:
+      - FileServer
+      - MSSQLServer
+  - source_pattern: FileServer
+    targets:
+      - DomainController
+      - MSSQLServer
+  - source_pattern: MSSQLServer
+    targets:
+      - DomainController
+  - source_pattern: DomainController
+    targets:
+      - AdminWorkstation
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.Recon.CredentialExtract
+    type: LOCAL
+    description: "Generic credential extraction from a compromised node — reads credential stores, environment variables, config files, and memory to obtain credentials reusable on adjacent nodes in the credential graph."
+    cost: 0.5
+    success_rate: 0.65
+    reward: "Credential extracted from {target} — new credential valid on adjacent node added to credential store"
+    node_probability: 0.65
+    target_coverage: 0.60
+    min_targets: 3
+    default_port: SSH
+  leak_neighbors:
+    name: Local.Recon.NodeDiscovery
+    type: LOCAL
+    description: "Multi-technique network reconnaissance from a compromised node — ARP cache read, DNS PTR enumeration, netstat connections, config file parsing for hostnames. Reveals all adjacent nodes known to this host."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Neighbor {target} discovered — hostname/IP mapped, service fingerprint obtained from network enumeration on compromised host"
+    node_probability: 0.60
+    target_coverage: 0.65
+    min_targets: 3
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Linux OS fingerprint via SSH banner, HTTP Server header, Nmap OS detection, and service enumeration. Identifies Linux distribution, kernel version, and exposed services."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.Windows
+    os: Windows
+    type: REMOTE
+    description: "Windows OS fingerprint via SMB banner, RDP negotiation, and NetBIOS name enumeration. Identifies Windows version, domain membership, and patch level."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.WindowsServer
+    os: WindowsServer
+    type: REMOTE
+    description: "Windows Server OS fingerprint via SMB/LDAP banners and NetBIOS enumeration. Identifies server roles (AD, IIS, MSSQL) and domain FQDN."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.NetworkDevice
+    os: NetworkDevice
+    type: REMOTE
+    description: "Network device fingerprint via SNMP OID scan, CDP neighbor discovery, Telnet/SSH banner, and HTTP management interface probing. Identifies device vendor, model, and IOS version."
+    cost: 0.5
+    success_rate: 1.0
+
+solvability_vulnerabilities:
+  remote_access:
+
+    # ── Trivial breach_node entry (ISPRouter pre-owned via internet scan) ─────
+    - name: Solvability.BreachNode_Entry
+      type: REMOTE
+      description: "SR 1.0 trivial probe on pre-owned ISPRouter breach node. Models the initial internet foothold — ISP router is reachable with default SNMP community string discovered during external reconnaissance. No RCE; credential-based access only."
+      cost: 0.5
+      success_rate: 1.0
+      reward: "ISPRouter breach node owned — initial internet foothold established via default SNMP community credential, Z4 network enumeration available"
+      match_properties:
+        - NetworkDevice
+        - breach_node
+      probability: 1.0
+
+  credential_leak:
+
+    # ── Network device credential extraction ─────────────────────────────────
+    - name: Solvability.SNMP_CommunityDump
+      type: LOCAL
+      description: "SNMP v1/v2c default community string harvest using snmpwalk against network devices. Extracts full MIB-II including sysDescr, interface table, ARP cache, IP routing table, and BGP/OSPF neighbor details — all critical for mapping Z4-to-Z6 paths."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "SNMP MIB dump complete — full ARP table, routing table, and BGP neighbor IPs extracted; Z4→Z6 network topology mapped"
+      match_properties:
+        - NetworkDevice
+        - SNMP
+        - Misconfigured
+      probability: 0.80
+
+    - name: Solvability.NetworkDevice_DefaultCreds
+      type: LOCAL
+      description: "Default administrator credentials (admin/admin, cisco/cisco, admin/password, enable secret) on network management interfaces (HTTP, Telnet, SSH, Console). Extracts running configuration including all VRF route tables, ACLs, SNMP communities, and authentication secrets."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "Network device default credentials accepted — full running config accessed, SNMP communities and interface credentials extracted"
+      match_properties:
+        - NetworkDevice
+        - DefaultCredentials
+      probability: 0.75
+
+    - name: Solvability.ConfigBackup_Exfil
+      type: LOCAL
+      description: "Read TFTP/FTP running-configuration backup from network device. Extracts all interface IPs, routing protocols (BGP/OSPF), SNMP community strings, AAA credentials, and tunnel pre-shared keys — a complete credential store for Z4/Z6 lateral movement."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "Network device running config exfiltrated — all interface IPs, SNMP secrets, routing credentials, and tunnel PSKs obtained"
+      match_properties:
+        - Router
+        - CiscoNXOS
+        - NetworkDevice
+      probability: 0.70
+
+    - name: Solvability.CiscoNXOS_CMDInject
+      type: LOCAL
+      description: "CVE-2017-12334 — Cisco NX-OS CLI command injection. CVSS 6.7. Authenticated command injection via NX-OS CLI allows executing arbitrary commands under a privileged context, exporting running configuration and VRF tables."
+      cost: 1.0
+      success_rate: 0.75
+      reward: "Cisco NX-OS CLI command injection (CVE-2017-12334) — privileged command output extracted, full router configuration including VPN credentials obtained"
+      match_properties:
+        - Switch
+        - CiscoNXOS
+        - NetworkDevice
+      probability: 0.65
+
+    # ── Cloud node credential extraction ──────────────────────────────────────
+    - name: Solvability.AWS_IMDSv1
+      type: LOCAL
+      description: "AWS Instance Metadata Service v1 credential theft. IMDSv1 allows unrestricted HTTP requests to 169.254.169.254/latest/meta-data/iam/security-credentials/ to retrieve temporary IAM role credentials (AccessKeyId, SecretAccessKey, SessionToken) without authentication."
+      cost: 0.5
+      success_rate: 0.85
+      reward: "AWS IMDSv1 IAM role credentials stolen — temporary AccessKeyId/SecretAccessKey/SessionToken obtained, full IAM role permissions available for S3/DynamoDB/Redis access"
+      match_properties:
+        - Linux
+        - Pod
+        - Kubernetes
+      probability: 0.80
+
+    - name: Solvability.Container_EnvVars
+      type: LOCAL
+      description: "Enumerate container environment variables for injected secrets. Kubernetes Secrets and ConfigMaps are frequently mounted as env vars in pods, leaking database passwords, Redis auth tokens, API keys, and service account credentials."
+      cost: 0.5
+      success_rate: 0.60
+      reward: "Container environment variable secrets dumped — database passwords, Redis auth tokens, and API keys found in pod env vars"
+      match_properties:
+        - Linux
+      probability: 0.75
+
+    - name: Solvability.Redis_NoAuth
+      type: LOCAL
+      description: "Connect to unauthenticated Redis instance (no requirepass configured, default bind 0.0.0.0). Execute KEYS *, HGETALL, and DUMP commands to extract all cached session tokens, database credentials, and user data stored in Redis."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "Unauthenticated Redis data dump complete — all cached session tokens, database credentials, and user data keys extracted"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - Redis
+        - Misconfigured
+      probability: 0.80
+
+    - name: Solvability.WordPressDB_Creds
+      type: LOCAL
+      description: "Read wp-config.php for MySQL/MariaDB connection credentials (DB_USER, DB_PASSWORD, DB_HOST). Database credentials frequently reused as domain user passwords or cloud service account credentials in enterprise environments."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "WordPress DB credentials extracted from wp-config.php — MySQL user/password obtained, likely reused for domain auth or cloud service accounts"
+      match_properties:
+        - Linux
+        - PHP
+        - WebServer
+        - WordPressInstall
+      probability: 0.70
+
+    - name: Solvability.Keycloak_AdminCreds
+      type: LOCAL
+      description: "Extract KEYCLOAK_ADMIN_PASSWORD environment variable or read keycloak.conf for admin credentials. Keycloak admin account has federation to Active Directory — admin credentials enable LDAP bind to domain and user enumeration."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "Keycloak admin credentials extracted — AD federation LDAP bind credentials obtained, full domain user enumeration via SSO provider"
+      match_properties:
+        - Linux
+        - AuthServer
+        - KeycloakService
+      probability: 0.70
+
+    - name: Solvability.SSH_PrivKey_Theft
+      type: LOCAL
+      description: "Steal unprotected SSH private keys from .ssh/id_rsa, .ssh/id_ecdsa, and authorized_keys files. SSH keys frequently grant direct root access to multiple Linux nodes including cloud and on-premise servers, enabling lateral movement without passwords."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "Unprotected SSH private key stolen from .ssh/id_rsa — direct SSH root access to adjacent Linux hosts without password authentication"
+      match_properties:
+        - Linux
+        - SSHKey
+      probability: 0.70
+
+    - name: Solvability.Grafana_DataSource
+      type: LOCAL
+      description: "Extract Grafana data source credentials from grafana.db SQLite database or Grafana API. Data sources include MSSQL, PostgreSQL, Elasticsearch, and Prometheus — DB credentials enable direct access to Windows SQL server and cloud data stores."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "Grafana data source credentials extracted from grafana.db — database credentials for Windows MSSQL and cloud datastores obtained"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+      probability: 0.65
+
+    - name: Solvability.KubeServiceAccount
+      type: LOCAL
+      description: "Read mounted Kubernetes service account JWT from /var/run/secrets/kubernetes.io/serviceaccount/token. ServiceAccount token with cluster-admin or namespace-admin bindings enables API server access for secret enumeration, cross-namespace credential extraction."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "Kubernetes service account JWT extracted — API server authenticated, cross-namespace secrets and ConfigMaps accessible, EC2/RDS credentials obtainable via cloud provider integration"
+      match_properties:
+        - Linux
+        - Kubernetes
+        - Pod
+      probability: 0.75
+
+    # ── Windows / AD credential extraction ────────────────────────────────────
+    - name: Solvability.LDAP_AnonymousBind
+      type: LOCAL
+      description: "LDAP anonymous bind to domain controller allows unauthenticated enumeration of AD objects including users, computers, groups, GPO objects, and service principal names (SPNs). Many DCs have anonymous bind permitted for legacy application compatibility."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "LDAP anonymous bind succeeded — full AD object enumeration including user accounts, SPNs, and computer objects without credentials"
+      match_properties:
+        - Windows
+        - DomainController
+        - LDAP
+      probability: 0.70
+
+    - name: Solvability.GPP_Password_Decryption
+      type: LOCAL
+      description: "Group Policy Preferences (GPP) cpassword decryption from SYSVOL. Older Group Policy Objects stored encrypted passwords in XML files accessible to all domain users via NETLOGON/SYSVOL share. AES-256 key was publicly disclosed by MS; trivially reversed to plaintext."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "GPP cpassword decrypted from SYSVOL — plaintext domain credential obtained (MS14-025 historical vulnerability still present in legacy GPO backups)"
+      match_properties:
+        - Windows
+        - DomainController
+        - DomainAdmin
+      probability: 0.70
+
+    - name: Solvability.Mimikatz_LSASS
+      type: LOCAL
+      description: "Dump LSASS process plaintext credentials using Mimikatz sekurlsa::wdigest on domain-joined Windows host with WDigest authentication enabled. Requires SeDebugPrivilege — typically held by domain users on domain controllers."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "LSASS Mimikatz dump achieved — plaintext domain credentials extracted including domain admin cached logon session"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - WDigest
+      probability: 0.70
+
+    - name: Solvability.Mimikatz_NTLM
+      type: LOCAL
+      description: "Dump NTLM hashes from LSASS memory using Mimikatz sekurlsa::logonpasswords. NTLM hashes can be used for Pass-the-Hash lateral movement to adjacent Windows nodes in the same credential domain."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "NTLM hash dump from LSASS — domain user and service account NTLM hashes obtained for pass-the-hash relay to Z1 nodes"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.70
+
+    - name: Solvability.LSA_Secrets
+      type: LOCAL
+      description: "Extract LSA secrets from HKLM\\SECURITY\\Policy\\Secrets registry hive. Reveals domain service account passwords stored by SCM, mscachev2 cached domain credential hashes, and DPAPI master keys useful for credential decryption."
+      cost: 0.5
+      success_rate: 0.65
+      reward: "LSA secrets extracted — service account passwords and cached domain credential hashes obtained from registry, WinRM service credentials exposed"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.65
+
+    - name: Solvability.WinRM_Credential_Cache
+      type: LOCAL
+      description: "Extract WinRM (Windows Remote Management) cached credentials from Windows Credential Manager (vault). WinRM sessions cache domain admin credentials for PowerShell remoting sessions — these can be extracted by a local admin and used to authenticate to any domain-joined Windows server."
+      cost: 0.5
+      success_rate: 0.60
+      reward: "WinRM cached credentials extracted from Windows Credential Manager — domain admin credential obtained for lateral movement to AdminWorkstation and all Windows servers"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - AdminCredentials
+      probability: 0.65
+
+  discovery:
+    - name: Solvability.SNMP_Walk
+      type: LOCAL
+      description: "SNMP walk against network devices using community string to enumerate full MIB-II tree. Returns all OIDs including interface addresses, ARP cache, IP routing table, and CDP neighbor table — reveals all directly connected network segments and adjacent device IPs."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "SNMP MIB-II walk complete — all interface IPs, ARP cache, and routing table obtained; adjacent network device IPs mapped"
+      match_properties:
+        - Misconfigured
+      probability: 0.80
+
+    - name: Solvability.DNS_ZoneTransfer
+      type: LOCAL
+      description: "DNS zone transfer (AXFR) from domain controller DNS server. Returns all DNS A/AAAA/CNAME/MX records for the GLOBALTECH internal domain, revealing all internal hostnames and IP addresses including those not directly reachable from current network position."
+      cost: 0.5
+      success_rate: 0.55
+      reward: "DNS zone transfer succeeded — full internal DNS zone obtained, all internal hostnames and IPs including AdminWorkstation, FileServers, MSSQLServers enumerated"
+      match_properties:
+        - Linux
+        - DomainJoined
+      probability: 0.60
+
+    - name: Solvability.ARP_Scan
+      type: LOCAL
+      description: "ARP cache enumeration and active ARP scan of local subnet. Reads ARP table, executes arp-scan or nmap -PR to discover all live hosts on the current /24 subnet, mapping MAC addresses to IPs for further targeting."
+      cost: 0.5
+      success_rate: 0.85
+      reward: "ARP scan complete — all live hosts on current subnet discovered including previously unknown Z1 workstations and servers"
+      match_properties:
+        - Windows
+      probability: 0.75
+
+    - name: Solvability.ARP_Table_Dump
+      type: LOCAL
+      description: "Read ARP cache from compromised network device via SNMP OID or show arp command. Returns all MAC-to-IP mappings for devices that communicated through this device, effectively mapping the entire local IP space including cloud and Z1 endpoints."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "Network device ARP table dumped — all Z4/Z6/Z1 host IPs obtained from device routing table cache"
+      match_properties:
+        - Router
+        - Switch
+        - NetworkDevice
+      probability: 0.80
+
+    - name: Solvability.BloodHound_Recon
+      type: LOCAL
+      description: "BloodHound/SharpHound Active Directory enumeration. Ingests LDAP/Kerberos data to map domain trust relationships, ACLs, group memberships, and shortest paths to Domain Admin including AdminWorkstation in the credential chain."
+      cost: 1.0
+      success_rate: 0.80
+      reward: "BloodHound AD attack graph built — all Z1 hosts, admin group memberships, and credential propagation paths to AdminWorkstation identified"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.85
+
+    - name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: "Authenticated LDAP query against domain controller for all AD objects: users, computers, groups, GPOs, SPNs, ASREProastable accounts, and OU structure. Provides complete map of Z1 domain-joined hosts and privilege accounts."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "LDAP enumeration complete — full AD inventory including AdminWorkstation, FileServer, MSSQLServer, and all domain-joined hosts obtained"
+      match_properties:
+        - Windows
+        - DomainController
+      probability: 0.80
+
+    - name: Solvability.SMB_ShareEnum
+      type: LOCAL
+      description: "SMB share enumeration to discover SYSVOL/NETLOGON shares on domain controller and file shares on FileServer. SYSVOL contains Group Policy Objects including GPP password XML files and logon scripts with hardcoded credentials."
+      cost: 0.5
+      success_rate: 0.70
+      reward: "SMB share enumeration complete — SYSVOL/NETLOGON share content mapped, GPP XML files and logon script credentials located"
+      match_properties:
+        - Windows
+        - FileServer
+        - SMBv1
+      probability: 0.75
+
+    - name: Solvability.Nmap_Internal
+      type: LOCAL
+      description: "Internal network host discovery and port scan. Uses Nmap -sV -O to fingerprint all live hosts on connected subnets, identifying Z1 Windows hosts, open LDAP/WinRM/RDP/SMB services, and cloud node connectivity."
+      cost: 1.0
+      success_rate: 0.85
+      reward: "Internal network scan complete — all live hosts across Z4/Z6/Z1 subnets enumerated, open services identified"
+      match_properties:
+        - Linux
+      probability: 0.80
+
+    - name: Solvability.K8s_APIEnum
+      type: LOCAL
+      description: "Kubernetes API server enumeration using service account JWT. Lists all namespaces, pods, secrets, configmaps, and services across the cluster. Reveals Redis endpoints, Jenkins service accounts, and auth server credentials stored as K8s Secrets."
+      cost: 1.0
+      success_rate: 0.75
+      reward: "Kubernetes API enumeration complete — all cluster namespaces, secrets, and service accounts discovered; Redis and Jenkins credential paths mapped"
+      match_properties:
+        - Linux
+        - Kubernetes
+        - Pod
+      probability: 0.75
+
+  goal_access:
+    - name: Solvability.AdminWorkstation_Takeover
+      type: LOCAL
+      description: "Full AdminWorkstation credential takeover using domain admin credentials propagated via WinRM credential cache from DomainController. Establishes authenticated WinRM (PowerShell Remoting) session to AdminWorkstation, extracts all sensitive data and domain admin credential material stored locally."
+      cost: 0.5
+      success_rate: 0.60
+      reward: "AdminWorkstation credential takeover complete — domain admin WinRM session established, all sensitive data and credential material exfiltrated; enterprise credential graph fully traversed"
+      match_properties:
+        - Windows
+        - DomainJoined
+        - AdminCredentials
+      probability: 0.80
+
+services:
+  # ── Z4 Network Devices ──────────────────────────────────────────────────────
+  ISPRouter:
+    port: SNMP
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - NetworkDevice
+      - Router
+      - CiscoIOS
+      - SNMP
+      - Misconfigured
+      - DefaultCredentials
+      - BGP
+      - breach_node
+    is_goal: false
+
+  CiscoEdgeRouter:
+    port: SNMP
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - NetworkDevice
+      - Router
+      - CiscoNXOS
+      - SNMP
+      - Misconfigured
+      - DefaultCredentials
+      - BGP
+    is_goal: false
+
+  PaloAltoFirewall:
+    port: HTTPS
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - NetworkDevice
+      - Firewall
+      - NGFW
+      - SNMP
+      - Misconfigured
+    is_goal: false
+
+  WAFAppliance:
+    port: HTTPS
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - NetworkDevice
+      - Firewall
+      - NGFW
+    is_goal: false
+
+  # ── Z6 Cloud Nodes ──────────────────────────────────────────────────────────
+  AWSWebServer:
+    port: HTTPS
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - WebServer
+      - AppServer
+      - PHP
+      - WordPressInstall
+      - SSHKey
+    is_goal: false
+
+  AWSAppServer:
+    port: HTTPS
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - AppServer
+      - GoRuntime
+      - Pod
+      - Kubernetes
+      - SSHKey
+    is_goal: false
+
+  AWSRedis:
+    port: Redis
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - DatabaseServer
+      - Redis
+      - Misconfigured
+    is_goal: false
+
+  AWSJenkins:
+    port: HTTPS
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - AppServer
+      - Java
+      - Pod
+      - Kubernetes
+    is_goal: false
+
+  AWSAuthServer:
+    port: HTTPS
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - AuthServer
+      - KeycloakService
+      - GoRuntime
+    is_goal: false
+
+  # ── Z1 Windows Nodes ────────────────────────────────────────────────────────
+  SalesWorkstation:
+    port: RDP
+    value: 900
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - NoLAPS
+    is_goal: false
+
+  FinanceWorkstation:
+    port: RDP
+    value: 900
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - NoLAPS
+      - FinancialData
+    is_goal: false
+
+  AdminWorkstation:
+    port: WinRM
+    value: 10000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - WorkStation
+      - DomainJoined
+      - WDigest
+      - AdminCredentials
+      - SensitiveData
+    is_goal: true
+
+  DomainController:
+    port: LDAP
+    value: 900
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2022
+      - DomainController
+      - DomainJoined
+      - DNSServer
+      - AD_KerberosKDC
+      - LDAP
+      - DomainAdmin
+      - AdminCredentials
+      - SensitiveData
+      - WDigest
+    is_goal: false
+
+  FileServer:
+    port: SMB
+    value: 900
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - FileServer
+      - DomainJoined
+      - SMBv1
+      - SMB
+      - SensitiveData
+    is_goal: false
+
+  MSSQLServer:
+    port: MSSQL
+    value: 900
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - WindowsServer
+      - Win2019
+      - MSSQLServer
+      - DatabaseServer
+      - DomainJoined
+      - SensitiveData
+    is_goal: false
+
+domains:
+  - name: GLOBALTECH_Network
+    subnet: 10.0.0.0/8
+    os_distribution:
+      Linux: 0.55
+      Windows: 0.35
+      NetworkDevice: 0.10
+    filler:
+      - SalesWorkstation
+      - AWSWebServer
+      - CiscoEdgeRouter
+    mandatory_services:
+      - ISPRouter
+      - CiscoEdgeRouter
+      - PaloAltoFirewall
+      - WAFAppliance
+      - AWSWebServer
+      - AWSAppServer
+      - AWSRedis
+      - AWSJenkins
+      - AWSAuthServer
+      - SalesWorkstation
+      - AdminWorkstation
+      - FinanceWorkstation
+      - DomainController
+      - FileServer
+      - MSSQLServer
+    groups:
+      - name: ISPRouters
+        service: ISPRouter
+        min_count: 1
+        max_count: 1
+      - name: CiscoEdgeRouters
+        service: CiscoEdgeRouter
+        min_count: 2
+        max_count: 6
+      - name: PaloAltoFirewalls
+        service: PaloAltoFirewall
+        min_count: 2
+        max_count: 10
+      - name: WAFAppliances
+        service: WAFAppliance
+        min_count: 2
+        max_count: 10
+      - name: AWSWebServers
+        service: AWSWebServer
+        min_count: 3
+        max_count: 60
+      - name: AWSAppServers
+        service: AWSAppServer
+        min_count: 3
+        max_count: 50
+      - name: AWSRedis
+        service: AWSRedis
+        min_count: 2
+        max_count: 10
+      - name: AWSJenkins
+        service: AWSJenkins
+        min_count: 2
+        max_count: 6
+      - name: AWSAuthServers
+        service: AWSAuthServer
+        min_count: 2
+        max_count: 10
+      - name: SalesWorkstations
+        service: SalesWorkstation
+        min_count: 20
+        max_count: 250
+      - name: AdminWorkstations
+        service: AdminWorkstation
+        min_count: 10
+        max_count: 100
+      - name: FinanceWorkstations
+        service: FinanceWorkstation
+        min_count: 10
+        max_count: 150
+      - name: DomainControllers
+        service: DomainController
+        min_count: 2
+        max_count: 12
+      - name: FileServers
+        service: FileServer
+        min_count: 3
+        max_count: 40
+      - name: MSSQLServers
+        service: MSSQLServer
+        min_count: 2
+        max_count: 30
+    constraints:
+      # === ISPRouters constraints ===
+      - source: ISPRouters
+        target: breach_node
+        relation: MUST_HAVE
+      # ISPRouters KNOW adjacent Z4 devices
+      - source: ISPRouters
+        target: CiscoEdgeRouters
+        relation: KNOWS
+      - source: ISPRouters
+        target: PaloAltoFirewalls
+        relation: KNOWS
+      # ISPRouters credential chain to Z4 devices
+      - source: ISPRouters
+        target: CiscoEdgeRouters
+        relation: MUST_CONNECT
+        protocol: SNMP
+      - source: ISPRouters
+        target: CiscoEdgeRouters
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: SNMP
+      # === CiscoEdgeRouters constraints ===
+      # CiscoEdgeRouters KNOW Z6 cloud IPs (from ARP/routing)
+      - source: CiscoEdgeRouters
+        target: AWSWebServers
+        relation: KNOWS
+      - source: CiscoEdgeRouters
+        target: AWSAppServers
+        relation: KNOWS
+      # CiscoEdgeRouters → Z6 credential chain (SNMP community → cloud API key)
+      - source: CiscoEdgeRouters
+        target: AWSWebServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: CiscoEdgeRouters
+        target: AWSWebServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+      - source: CiscoEdgeRouters
+        target: AWSJenkins
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: CiscoEdgeRouters
+        target: AWSJenkins
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+      # === PaloAltoFirewalls constraints ===
+      - source: PaloAltoFirewalls
+        target: AWSWebServers
+        relation: KNOWS
+      - source: PaloAltoFirewalls
+        target: CiscoEdgeRouters
+        relation: MUST_CONNECT
+        protocol: SNMP
+      # === WAFAppliances constraints ===
+      - source: WAFAppliances
+        target: AWSWebServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: WAFAppliances
+        target: AWSAuthServers
+        relation: KNOWS
+      # === AWSWebServers constraints ===
+      - source: AWSWebServers
+        target: AWSAppServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: AWSWebServers
+        target: AWSRedis
+        relation: MUST_CONNECT
+        protocol: Redis
+      - source: AWSWebServers
+        target: AWSAuthServers
+        relation: KNOWS
+      # AWSWebServers credential chain to AWSAppServers (service-to-service API key)
+      - source: AWSWebServers
+        target: AWSAppServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+      # === AWSAppServers constraints ===
+      - source: AWSAppServers
+        target: AWSRedis
+        relation: MUST_CONNECT
+        protocol: Redis
+      - source: AWSAppServers
+        target: AWSJenkins
+        relation: KNOWS
+      # AWSAppServers → AWSRedis credential chain (IAM role → Redis token)
+      - source: AWSAppServers
+        target: AWSRedis
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: Redis
+      # === AWSRedis constraints ===
+      # AWSRedis credential chain to Z1 Windows (leaked DB/session credentials)
+      - source: AWSRedis
+        target: SalesWorkstations
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: AWSRedis
+        target: SalesWorkstations
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: SMB
+      - source: AWSRedis
+        target: FinanceWorkstations
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: AWSRedis
+        target: FinanceWorkstations
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: SMB
+      # === AWSAuthServers constraints ===
+      - source: AWSAuthServers
+        target: SalesWorkstations
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: AWSAuthServers
+        target: SalesWorkstations
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+      # AWSAuthServers KNOW domain-joined nodes (via AD federation LDAP queries)
+      - source: AWSAuthServers
+        target: DomainControllers
+        relation: KNOWS
+      # === AWSJenkins constraints ===
+      # AWSJenkins credential chain to Z1 (CI/CD pipeline service account creds)
+      - source: AWSJenkins
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: AWSJenkins
+        target: DomainControllers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: LDAP
+      - source: AWSJenkins
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: AWSJenkins
+        target: FileServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: SMB
+      # === SalesWorkstations constraints ===
+      - source: SalesWorkstations
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: Kerberos
+      - source: SalesWorkstations
+        target: DomainControllers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: Kerberos
+      - source: SalesWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      # === FinanceWorkstations constraints ===
+      - source: FinanceWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: FinanceWorkstations
+        target: MSSQLServers
+        relation: MUST_CONNECT
+        protocol: MSSQL
+      # === FileServers constraints ===
+      - source: FileServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: Kerberos
+      - source: FileServers
+        target: DomainControllers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: Kerberos
+      - source: FileServers
+        target: MSSQLServers
+        relation: MUST_CONNECT
+        protocol: MSSQL
+      # === DomainControllers constraints ===
+      - source: DomainControllers
+        target: AdminCredentials
+        relation: MUST_HAVE
+      - source: DomainControllers
+        target: DomainAdmin
+        relation: MUST_HAVE
+      - source: DomainControllers
+        target: SensitiveData
+        relation: MUST_HAVE
+      # DomainControllers → AdminWorkstations (WinRM credential cache → GOAL)
+      - source: DomainControllers
+        target: AdminWorkstations
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: WinRM
+      - source: DomainControllers
+        target: AdminWorkstations
+        relation: MUST_CONNECT
+        protocol: WinRM
+      # DomainControllers KNOW all Z1 nodes (via LDAP/DNS)
+      - source: DomainControllers
+        target: SalesWorkstations
+        relation: KNOWS
+      - source: DomainControllers
+        target: FinanceWorkstations
+        relation: KNOWS
+      - source: DomainControllers
+        target: FileServers
+        relation: KNOWS
+      - source: DomainControllers
+        target: MSSQLServers
+        relation: KNOWS
+      # === AdminWorkstations constraints ===
+      - source: AdminWorkstations
+        target: AdminCredentials
+        relation: MUST_HAVE
+      - source: AdminWorkstations
+        target: SensitiveData
+        relation: MUST_HAVE
+
+entry_points:
+  - domain: GLOBALTECH_Network
+    node: ISPRouters
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.65
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities
+
+credential_banks:
+  bank_types:
+    - guest
+    - network_admin
+    - cloud_iam
+    - cloud_service
+    - domain_user
+    - local_admin
+    - admin
+    - service_admin
+    - domain_admin
+    - enterprise_admin
+    - db_admin
+  categorization_rules:
+    - group_pattern: "Router"
+      banks: [network_admin, admin]
+    - group_pattern: "Firewall"
+      banks: [network_admin]
+    - group_pattern: "AWS"
+      banks: [cloud_iam, cloud_service]
+    - group_pattern: "Workstation"
+      banks: [guest, domain_user]
+    - group_pattern: "Admin"
+      banks: [local_admin, domain_user]
+    - group_pattern: "DomainController"
+      banks: [domain_admin, enterprise_admin, service_admin, admin]
+    - group_pattern: "MSSQL"
+      banks: [db_admin, admin]
+    - group_pattern: "FileServer"
+      banks: [admin, service_admin, domain_user]
+    - properties: [Windows, WindowsServer]
+      banks: [local_admin, domain_user]
+    - properties: [DomainAdmin, AdminCredentials]
+      banks: [domain_admin, enterprise_admin]

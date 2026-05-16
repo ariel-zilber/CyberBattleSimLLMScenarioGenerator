@@ -1,0 +1,859 @@
+# =============================================================================
+# S-NET-01: GLOBALTECH Network Perimeter Gauntlet
+# Standalone training config for S_NetPerim specialist
+# Agent: S_NetPerim
+# Zones: Z4 Internet Edge (10.0.1.0/24) + Z2 HQ Edge (10.0.2.0/24)
+# Two CBS domains: Z4 Internet Edge (10.0.1.0/24) + Z2 HQ Edge (10.0.2.0/24)
+# connected by inter_domain_constraint (HTTPS/REST).
+# Terminal goal: CiscoEdgeRouter (value 10000, is_goal: true)
+# Nodes: 25–90  |  See SCENARIO_CATALOG.md S-NET-01 for full rationale
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   S_NetPerim attacks GLOBALTECH's dual-zone perimeter from the public internet.
+#   Zone Z4 (Internet Edge) hosts exposed appliances — ISP routers, WAFs, IPS,
+#   Cisco ASA, F5 BIG-IP, Citrix ADC, and Juniper MX routers — all reachable via
+#   HTTPS/REST from the attacker's breach node. The agent must chain CVE exploits
+#   against network devices (PAN-OS, FortiOS, BIG-IP, Citrix Bleed, IOS XE) to
+#   breach the inter-domain boundary and pivot into Zone Z2 (HQ Edge), where
+#   FortiGate NGFW, Cisco NX-OS core switches, Cisco Firepower, and Palo Alto
+#   firewalls guard the internal network. The terminal goal is the Cisco ISR 4451
+#   edge router (CiscoEdgeRouter), representing full perimeter ownership.
+#
+# ATTACKER PROGRESSION:
+#   1. Probe Z4 — fingerprint exposed appliances via banner grabbing / SNMP sysDescr
+#   2. Exploit Z4 — chain CVEs on WAF / ASA / F5 / Citrix to gain foothold
+#   3. Cross boundary — use inter_domain_constraint HTTPS/REST pivot into Z2
+#   4. Exploit Z2 — target FortiGate / PAN-OS / NX-OS with high-CVSS CVEs
+#   5. Reach goal — own CiscoEdgeRouter (CVSS 10.0 IOS XE Web UI exploit)
+#
+# DESIGN DECISIONS:
+#   NetDev CVE database used exclusively; EPSS probabilities reflect real-world
+#   exploitation likelihood for network device vulnerabilities.
+
+config:
+  min_total_nodes: 25
+  max_total_nodes: 90
+  goal_config:
+    num_goals: 1
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - HTTP
+    - HTTPS
+    - REST
+    - SSH
+    - SNMP
+    - BGP
+    - LDAP
+    - Kerberos
+    - SMB
+  standard_ports_extra:
+    - ICMP
+    - NTP
+    - DNS
+  base_properties:
+    - breach_node
+    # OS / runtime
+    - Linux
+    - NetworkDevice
+    - Unpatched
+    - Patched
+    - Misconfigured
+    - DefaultCredentials
+    - SNMP
+    - ConfigAccess
+    - AdminCredentials
+    # Routers
+    - Router
+    - CiscoIOS
+    - BGP
+    - JuniperJunos
+    # Switches
+    - Switch
+    - CiscoNXOS
+    # Firewalls
+    - Firewall
+    - CiscoASA
+    - CiscoFirepower
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - FortiGate
+    - SSLVPN
+    - WAF
+    - IPS
+    # Load balancers / ADC
+    - LoadBalancer
+    - F5BIGIP
+    - CitrixADC
+    - Netscaler
+
+os_management_ports:
+  Linux: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.5
+  properties:
+    - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+    - HTTP
+    - HTTPS
+  entry_node_count: 1
+  leaked_node_coverage: 0.10
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Network.Reconnaissance
+      type: LOCAL
+      description: "Internet-facing port scan, banner grabbing, and firewall fingerprinting to identify exposed network appliance management interfaces and vendor types."
+      cost: 0.5
+      success_rate: 1.0
+      reward: "External network reconnaissance complete — exposed management interfaces and appliance vendor stack identified"
+    credential_leak:
+      name: External.OSINT.DeviceEnumeration
+      type: LOCAL
+      description: "Shodan/Censys queries and OSINT to enumerate exposed network device banners, firmware versions, and default credential hints."
+      cost: 1.0
+      success_rate: 0.75
+      reward: "OSINT device enumeration complete — appliance model fingerprints and default credential candidates identified"
+
+attack_flow:
+  - source_pattern: ISPRouter
+    targets:
+      - WAFAppliance
+      - IPSAppliance
+      - CiscoASA
+      - JuniperRouter
+  - source_pattern: WAFAppliance
+    targets:
+      - CiscoASA
+      - F5LoadBalancer
+      - CitrixADC
+  - source_pattern: IPSAppliance
+    targets:
+      - CiscoASA
+      - F5LoadBalancer
+  - source_pattern: CiscoASA
+    targets:
+      - PaloAltoFirewall
+      - FortiGateAppliance
+      - CiscoNXOS
+  - source_pattern: F5LoadBalancer
+    targets:
+      - PaloAltoFirewall
+      - FortiGateAppliance
+  - source_pattern: CitrixADC
+    targets:
+      - PaloAltoFirewall
+      - CiscoNXOS
+  - source_pattern: JuniperRouter
+    targets:
+      - CiscoNXOS
+      - FortiGateAppliance
+  - source_pattern: PaloAltoFirewall
+    targets:
+      - CiscoNXOS
+      - CiscoFirepower
+  - source_pattern: FortiGateAppliance
+    targets:
+      - CiscoNXOS
+      - CiscoFirepower
+  - source_pattern: CiscoNXOS
+    targets:
+      - CiscoEdgeRouter
+  - source_pattern: CiscoFirepower
+    targets:
+      - CiscoEdgeRouter
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.NetworkDevice.CredentialHarvest
+    type: LOCAL
+    description: "Extracts running-config, SNMP community strings, enable passwords, and API tokens from a compromised network appliance's flash storage or management daemon."
+    cost: 1.0
+    success_rate: 0.70
+    reward: "Network device configuration harvested — credentials for {target} recovered from running-config"
+    node_probability: 0.60
+    target_coverage: 0.35
+    min_targets: 1
+    default_port: SNMP
+  leak_neighbors:
+    name: Local.NetworkDevice.TopologyDiscovery
+    type: LOCAL
+    description: "Reads ARP cache, CDP/LLDP neighbor tables, and BGP peer table from a compromised network device to enumerate all adjacent hosts."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Network topology discovery complete — {target} and adjacent devices enumerated via ARP/CDP/BGP"
+    node_probability: 0.70
+    target_coverage: 0.45
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.NetworkDevice
+    os: Linux
+    type: REMOTE
+    description: "Identifies network appliance type via SNMP sysDescr OID, HTTP management banner, and SSH hostkey algorithm fingerprint."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.CiscoIOS
+    os: Linux
+    type: REMOTE
+    description: "Identifies Cisco IOS/NX-OS device via SNMP sysDescr OID and HTTP management page banner."
+    cost: 0.5
+    success_rate: 1.0
+  - name: Remote.Probe.PANOS
+    os: Linux
+    type: REMOTE
+    description: "Identifies Palo Alto PAN-OS device via GlobalProtect portal HTTP response and SSH hostkey."
+    cost: 0.5
+    success_rate: 1.0
+
+solvability_vulnerabilities:
+  remote_access:
+    - name: Solvability.PanOS_CMDInject
+      type: REMOTE
+      description: "CVE-2024-3400 — PAN-OS GlobalProtect command injection RCE. CVSS 10.0. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "PAN-OS GlobalProtect RCE (CVE-2024-3400) — root shell on PaloAltoFirewall"
+      match_properties:
+        - Firewall
+        - PaloAlto
+        - PANOS
+        - GlobalProtect
+      probability: 0.85
+
+    - name: Solvability.PanOS_TOCTOU
+      type: REMOTE
+      description: "CVE-2021-3054 — PAN-OS Web UI TOCTOU race condition. CVSS 7.2."
+      cost: 1.5
+      success_rate: 0.85
+      reward: "PAN-OS Web UI TOCTOU (CVE-2021-3054) — privileged session hijacked on PaloAltoFirewall"
+      match_properties:
+        - Firewall
+        - PaloAlto
+        - PANOS
+      probability: 0.65
+
+    - name: Solvability.FortiOS_SSLVPN_RCE
+      type: REMOTE
+      description: "CVE-2023-27997 — FortiOS SSL VPN heap overflow RCE. CVSS 9.8. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "FortiOS SSL VPN heap overflow (CVE-2023-27997) — unauthenticated RCE on FortiGateAppliance"
+      match_properties:
+        - Firewall
+        - FortiGate
+        - SSLVPN
+        - Unpatched
+      probability: 0.75
+
+    - name: Solvability.FortiOS_AuthBypass
+      type: REMOTE
+      description: "CVE-2020-12812 — FortiOS SSL VPN authentication bypass. CVSS 9.8."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "FortiOS auth bypass (CVE-2020-12812) — unauthenticated access to FortiGate management plane"
+      match_properties:
+        - Firewall
+        - FortiGate
+        - SSLVPN
+        - Unpatched
+      probability: 0.70
+
+    - name: Solvability.CiscoASA_OSPF
+      type: REMOTE
+      description: "CVE-2026-20020 — Cisco ASA OSPF unauthenticated RCE. CVSS 6.8."
+      cost: 1.5
+      success_rate: 0.85
+      reward: "Cisco ASA OSPF exploit (CVE-2026-20020) — unauthenticated access to ASA management"
+      match_properties:
+        - Firewall
+        - CiscoASA
+        - NetworkDevice
+      probability: 0.65
+
+    - name: Solvability.F5_BIGIP_AuthBypass
+      type: REMOTE
+      description: "CVE-2022-1388 — F5 BIG-IP iControl REST authentication bypass. CVSS 9.8. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "F5 BIG-IP iControl REST auth bypass (CVE-2022-1388) — unauthenticated admin access on F5LoadBalancer"
+      match_properties:
+        - LoadBalancer
+        - F5BIGIP
+        - NetworkDevice
+        - Unpatched
+      probability: 0.80
+
+    - name: Solvability.F5_BIGIP_RCE
+      type: REMOTE
+      description: "CVE-2021-22986 — F5 BIG-IP iControl REST RCE. CVSS 9.8. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "F5 BIG-IP iControl RCE (CVE-2021-22986) — OS command execution via iControl REST on F5LoadBalancer"
+      match_properties:
+        - LoadBalancer
+        - F5BIGIP
+        - NetworkDevice
+        - Unpatched
+      probability: 0.75
+
+    - name: Solvability.Citrix_Bleed
+      type: REMOTE
+      description: "CVE-2023-4966 — Citrix Bleed session token leak. CVSS 9.4. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Citrix Bleed session token leaked (CVE-2023-4966) — valid admin session stolen from CitrixADC"
+      match_properties:
+        - LoadBalancer
+        - CitrixADC
+        - Netscaler
+        - Unpatched
+      probability: 0.80
+
+    - name: Solvability.Citrix_ADC_RCE
+      type: REMOTE
+      description: "CVE-2022-27510 — Citrix ADC authentication bypass. CVSS 9.8."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Citrix ADC auth bypass (CVE-2022-27510) — unauthenticated management access on CitrixADC"
+      match_properties:
+        - LoadBalancer
+        - CitrixADC
+        - Netscaler
+        - Unpatched
+      probability: 0.75
+
+    - name: Solvability.CiscoNXOS_CMDInject
+      type: REMOTE
+      description: "CVE-2017-12334 — Cisco NX-OS CLI command injection. CVSS 6.7."
+      cost: 1.5
+      success_rate: 0.75
+      reward: "Cisco NX-OS CLI command injection (CVE-2017-12334) — arbitrary command execution on CiscoNXOS switch"
+      match_properties:
+        - Switch
+        - CiscoNXOS
+        - NetworkDevice
+      probability: 0.60
+
+    - name: Solvability.CiscoNXOS_PrivEsc
+      type: REMOTE
+      description: "CVE-2024-20399 — Cisco NX-OS CLI privilege escalation. CVSS 6.0. CISA KEV."
+      cost: 1.5
+      success_rate: 0.60
+      reward: "Cisco NX-OS CLI privilege escalation (CVE-2024-20399) — network-admin on CiscoNXOS obtained"
+      match_properties:
+        - Switch
+        - CiscoNXOS
+        - NetworkDevice
+      probability: 0.55
+
+    - name: Solvability.CiscoIOS_XE_PrivEsc
+      type: REMOTE
+      description: "CVE-2023-20198 — Cisco IOS XE Web UI privilege escalation. CVSS 10.0. CISA KEV."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Cisco IOS XE Web UI priv-esc (CVE-2023-20198) — level-15 privilege on CiscoIOS device"
+      match_properties:
+        - Router
+        - CiscoIOS
+        - NetworkDevice
+        - Unpatched
+      probability: 0.80
+
+    - name: Solvability.JuniperJunos_AuthBypass
+      type: REMOTE
+      description: "CVE-2018-0053 — Juniper Junos vSRX boot authentication bypass. CVSS 6.8."
+      cost: 1.5
+      success_rate: 0.65
+      reward: "Juniper Junos auth bypass (CVE-2018-0053) — unauthenticated access to JuniperRouter management"
+      match_properties:
+        - Router
+        - JuniperJunos
+        - NetworkDevice
+      probability: 0.55
+
+    - name: Solvability.CiscoIOS_RPKI
+      type: REMOTE
+      description: "CVE-2022-20694 — Cisco IOS XE RPKI unauthenticated access. CVSS 6.8."
+      cost: 1.5
+      success_rate: 0.85
+      reward: "Cisco IOS XE RPKI vulnerability (CVE-2022-20694) — unauthenticated access to BGP router management"
+      match_properties:
+        - Router
+        - CiscoIOS
+        - BGP
+        - NetworkDevice
+      probability: 0.60
+
+  credential_leak:
+    - name: Solvability.SNMP_CommunityDump
+      type: LOCAL
+      description: "Reads SNMP v1/v2c community strings from a compromised device running-config, exposing full MIB including neighbor tables and interface IPs."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "SNMP community strings extracted — SNMP read/write access to adjacent devices obtained"
+      match_properties:
+        - Router
+        - Switch
+        - SNMP
+        - NetworkDevice
+      probability: 0.65
+      target_coverage: 0.40
+      min_targets: 1
+
+    - name: Solvability.ConfigBackup_Exfil
+      type: LOCAL
+      description: "Reads running-config or startup-config from a compromised device, exposing all interface IPs, routing tables, ACLs, and type-7 password hashes."
+      cost: 1.0
+      success_rate: 0.65
+      reward: "Running-config exfiltrated — all interface IPs, ACLs, and hashed enable passwords recovered"
+      match_properties:
+        - NetworkDevice
+        - ConfigAccess
+      probability: 0.60
+      target_coverage: 0.35
+      min_targets: 1
+
+    - name: Solvability.NetworkDevice_DefaultCreds
+      type: LOCAL
+      description: "Tests default vendor credentials (admin/admin, cisco/cisco, fortinet/fortinet) against adjacent devices discovered via ARP or CDP."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "Default credentials accepted on adjacent network device — management plane access obtained"
+      match_properties:
+        - NetworkDevice
+        - DefaultCredentials
+      probability: 0.55
+      target_coverage: 0.30
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.CDP_Neighbors
+      type: LOCAL
+      description: "Reads Cisco CDP or LLDP neighbor table from a compromised switch or router, revealing adjacent hostnames, IPs, and platform types."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "CDP/LLDP neighbor table read — adjacent network devices fully enumerated"
+      match_properties:
+        - Router
+        - Switch
+        - CiscoIOS
+        - NetworkDevice
+      probability: 0.70
+      target_coverage: 0.50
+      min_targets: 2
+
+    - name: Solvability.ARP_Table_Dump
+      type: LOCAL
+      description: "Reads ARP cache from a compromised network device, mapping all active IP-to-MAC bindings on attached subnets."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "ARP table dump complete — all active hosts on attached subnets identified"
+      match_properties:
+        - Router
+        - Switch
+        - NetworkDevice
+      probability: 0.75
+      target_coverage: 0.50
+      min_targets: 2
+
+    - name: Solvability.BGP_TableDump
+      type: LOCAL
+      description: "Dumps BGP routing table from an edge router to map all internally reachable subnets and AS peer relationships."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "BGP routing table dumped — complete GLOBALTECH internal subnet map obtained"
+      match_properties:
+        - Router
+        - BGP
+        - NetworkDevice
+      probability: 0.65
+      target_coverage: 0.45
+      min_targets: 1
+
+    - name: Solvability.SNMP_Walk
+      type: LOCAL
+      description: "Full SNMP walk using harvested community string, enumerating all OIDs including interface table, ARP cache, and routing table."
+      cost: 0.5
+      success_rate: 0.60
+      reward: "SNMP walk complete — full OID tree enumerated, network topology reconstructed"
+      match_properties:
+        - Misconfigured
+      probability: 0.60
+      target_coverage: 0.40
+      min_targets: 1
+
+  goal_access:
+    - name: Solvability.EnablePassword_Crack
+      type: LOCAL
+      description: "Cracks Cisco enable secret type-5/7 hash from exfiltrated running-config. Type-7 is trivially reversible; type-5 cracked offline with hashcat against known wordlists."
+      cost: 2.0
+      success_rate: 0.60
+      reward: "Cisco enable password cracked — full privileged (level-15) access to CiscoEdgeRouter obtained, routing tables owned"
+      match_properties:
+        - Router
+        - CiscoIOS
+        - NetworkDevice
+      probability: 0.60
+      goal_category: privesc
+
+services:
+  # ── Z4 Internet Edge ────────────────────────────────────────────────────────
+  ISPRouter:
+    port: BGP
+    value: 500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Router
+      - CiscoIOS
+      - BGP
+      - NetworkDevice
+      - SNMP
+      - Misconfigured
+      - ConfigAccess
+    is_goal: false
+
+  WAFAppliance:
+    port: HTTPS
+    value: 1000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - CiscoASA
+      - WAF
+      - NetworkDevice
+      - DefaultCredentials
+      - Unpatched
+    is_goal: false
+
+  IPSAppliance:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - CiscoASA
+      - IPS
+      - NetworkDevice
+      - DefaultCredentials
+    is_goal: false
+
+  CiscoASA:
+    port: HTTPS
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - CiscoASA
+      - NetworkDevice
+      - SNMP
+      - ConfigAccess
+    is_goal: false
+
+  F5LoadBalancer:
+    port: HTTPS
+    value: 2500
+    allowed_os:
+      - Linux
+    default_properties:
+      - LoadBalancer
+      - F5BIGIP
+      - NetworkDevice
+      - Unpatched
+      - ConfigAccess
+    is_goal: false
+
+  CitrixADC:
+    port: HTTPS
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - LoadBalancer
+      - CitrixADC
+      - Netscaler
+      - NetworkDevice
+      - Unpatched
+    is_goal: false
+
+  JuniperRouter:
+    port: SSH
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Router
+      - JuniperJunos
+      - BGP
+      - NetworkDevice
+      - SNMP
+      - ConfigAccess
+    is_goal: false
+
+  # ── Z2 HQ Edge ──────────────────────────────────────────────────────────────
+  FortiGateAppliance:
+    port: HTTPS
+    value: 3500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - FortiGate
+      - SSLVPN
+      - NetworkDevice
+      - Unpatched
+      - ConfigAccess
+    is_goal: false
+
+  CiscoNXOS:
+    port: SSH
+    value: 4000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Switch
+      - CiscoNXOS
+      - NetworkDevice
+      - SNMP
+      - Misconfigured
+      - ConfigAccess
+    is_goal: false
+
+  CiscoFirepower:
+    port: HTTPS
+    value: 4500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - CiscoASA
+      - CiscoFirepower
+      - NetworkDevice
+      - ConfigAccess
+    is_goal: false
+
+  PaloAltoFirewall:
+    port: HTTPS
+    value: 6500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Firewall
+      - PaloAlto
+      - PANOS
+      - GlobalProtect
+      - NetworkDevice
+      - ConfigAccess
+    is_goal: false
+
+  CiscoEdgeRouter:
+    port: SSH
+    value: 10000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Router
+      - CiscoIOS
+      - BGP
+      - NetworkDevice
+      - SNMP
+      - ConfigAccess
+      - Unpatched
+      - AdminCredentials
+    is_goal: true
+
+domains:
+  # ── DOMAIN 1: Z4 Internet Edge ──────────────────────────────────────────────
+  - name: InternetEdge
+    subnet: 10.0.1.0/24
+    filler:
+      - WAFAppliance
+      - CiscoASA
+    mandatory_services:
+      - ISPRouter
+      - WAFAppliance
+      - IPSAppliance
+      - CiscoASA
+      - F5LoadBalancer
+      - CitrixADC
+      - JuniperRouter
+    groups:
+      - name: ISPRouters
+        service: ISPRouter
+        min_count: 2
+        max_count: 6
+      - name: WAFAppliances
+        service: WAFAppliance
+        min_count: 2
+        max_count: 10
+      - name: IPSAppliances
+        service: IPSAppliance
+        min_count: 2
+        max_count: 8
+      - name: CiscoASAs
+        service: CiscoASA
+        min_count: 2
+        max_count: 10
+      - name: F5LoadBalancers
+        service: F5LoadBalancer
+        min_count: 2
+        max_count: 12
+      - name: CitrixADCs
+        service: CitrixADC
+        min_count: 2
+        max_count: 8
+      - name: JuniperRouters
+        service: JuniperRouter
+        min_count: 2
+        max_count: 6
+    constraints:
+      - source: WAFAppliances
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: F5LoadBalancers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: CitrixADCs
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: ISPRouters
+        target: Misconfigured
+        relation: MUST_HAVE
+      - source: ISPRouters
+        target: WAFAppliances
+        relation: MUST_REACH
+        protocol: HTTPS
+      - source: WAFAppliances
+        target: CiscoASAs
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: CiscoASAs
+        target: F5LoadBalancers
+        relation: KNOWS
+      - source: CiscoASAs
+        target: CitrixADCs
+        relation: KNOWS
+      - source: JuniperRouters
+        target: CiscoASAs
+        relation: KNOWS
+      - source: ISPRouters
+        target: JuniperRouters
+        relation: KNOWS
+
+  # ── DOMAIN 2: Z2 HQ Edge ────────────────────────────────────────────────────
+  - name: HQ_Edge
+    subnet: 10.0.2.0/24
+    filler:
+      - CiscoNXOS
+      - FortiGateAppliance
+    mandatory_services:
+      - FortiGateAppliance
+      - CiscoNXOS
+      - CiscoFirepower
+      - PaloAltoFirewall
+      - CiscoEdgeRouter
+    groups:
+      - name: FortiGateAppliances
+        service: FortiGateAppliance
+        min_count: 2
+        max_count: 10
+      - name: CiscoNXOSSwitches
+        service: CiscoNXOS
+        min_count: 4
+        max_count: 20
+      - name: CiscoFirepowers
+        service: CiscoFirepower
+        min_count: 2
+        max_count: 8
+      - name: PaloAltoFirewalls
+        service: PaloAltoFirewall
+        min_count: 2
+        max_count: 10
+      - name: CiscoEdgeRouters
+        service: CiscoEdgeRouter
+        min_count: 2
+        max_count: 6
+    constraints:
+      - source: FortiGateAppliances
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: CiscoEdgeRouters
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: CiscoNXOSSwitches
+        target: Misconfigured
+        relation: MUST_HAVE
+      - source: PaloAltoFirewalls
+        target: CiscoNXOSSwitches
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: FortiGateAppliances
+        target: CiscoNXOSSwitches
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: CiscoNXOSSwitches
+        target: CiscoEdgeRouters
+        relation: MUST_CONNECT
+        protocol: SSH
+      - source: CiscoFirepowers
+        target: CiscoNXOSSwitches
+        relation: KNOWS
+      - source: PaloAltoFirewalls
+        target: CiscoFirepowers
+        relation: KNOWS
+
+# ── INTER-DOMAIN: Z4 → Z2 (HTTPS/REST only — no SMB/RDP/LDAP) ────────────────
+inter_domain_constraints:
+  - source_domain: InternetEdge
+    target_domain: HQ_Edge
+    constraints:
+      - source: CiscoASAs
+        target: PaloAltoFirewalls
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: WAFAppliances
+        target: PaloAltoFirewalls
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: F5LoadBalancers
+        target: FortiGateAppliances
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: JuniperRouters
+        target: CiscoNXOSSwitches
+        relation: MUST_CONNECT
+        protocol: REST
+      - source: CiscoASAs
+        target: FortiGateAppliances
+        relation: KNOWS
+      - source: ISPRouters
+        target: PaloAltoFirewalls
+        relation: KNOWS
+
+entry_points:
+  - domain: InternetEdge
+    node: ISPRouters
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.55
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

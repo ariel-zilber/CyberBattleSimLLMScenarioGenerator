@@ -1,0 +1,328 @@
+# GLOBALTECH Zone Coverage Manifest
+# ------------------------------------
+# Declares which GLOBALTECH zones (ref.md) each CBS config must represent and
+# what structural topology rules must hold.  Used by
+# tools/validate_zone_coverage.py (pipeline Step 1b — hard gate).
+#
+# CHECKS (in order):
+#
+# 1. required_domains
+#    Each entry declares an expected CBS domain: name (exact or regex pattern),
+#    subnet (exact CIDR), and its GLOBALTECH zone ID for reporting.
+#    domain_count: expected number of domains in the config.
+#
+# 2. required_zone_groups
+#    Each zone_id → list of pattern-groups.  A pattern-group is a list of regex
+#    alternatives: passes if AT LEAST ONE group name matches at least one pattern
+#    in EVERY pattern-group listed.
+#
+# 3. required_service_properties
+#    service_pattern (regex) must exist AND every listed property must appear in
+#    the service's default_properties.
+#
+# 4. required_inter_domain_flows
+#    Each entry: source_domain + target_domain (exact name or regex) must have an
+#    inter_domain_constraints edge with MUST_CONNECT, and at least one of
+#    protocols_any must be used.  relation defaults to MUST_CONNECT.
+#
+# 5. forbidden_inter_domain_flows
+#    These source_domain → target_domain edges must NOT appear in
+#    inter_domain_constraints (catches firewall-bypass topology errors).
+#
+# 6. attack_flow_zones
+#    The attack_flow path must include services from each listed zone.
+
+configs:
+
+  # ── S-NET-01: Network / Perimeter ─────────────────────────────────────────
+  snet_perimeter_standalone_v1:
+    specialist: S-NET-01
+    description: "Internet Edge (Z4) + HQ Edge (Z2) — firewall/router attack surface"
+
+    domain_count: 2
+    required_domains:
+      - name: "InternetEdge"
+        subnet: "10.0.1.0/24"
+        globaltech_zone: Z4
+      - name: "HQ_Edge"
+        subnet: "10.0.2.0/24"
+        globaltech_zone: Z2
+
+    required_zone_groups:
+      Z4_InternetEdge:
+        - ["ISP", "Router", "Edge"]
+        - ["WAF", "IPS", "Firewall", "F5", "Citrix", "Juniper", "Cisco", "Palo", "FortiGate"]
+      Z2_HQEdge:
+        - ["Firewall", "Palo", "FortiGate", "CiscoFirepower", "CiscoASA"]
+        - ["Router", "Edge", "NXOS", "ISR"]
+
+    required_service_properties:
+      - service_pattern: "ISPRouter|CiscoEdgeRouter|JuniperRouter"
+        required_properties: ["NetworkDevice", "Router"]
+      - service_pattern: "PaloAltoFirewall|CiscoFirepower|FortiGateAppliance|CiscoASA"
+        required_properties: ["Firewall"]
+
+    required_inter_domain_flows:
+      - source_domain: "InternetEdge"
+        target_domain: "HQ_Edge"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["HTTPS", "REST", "TCP"]
+        description: "Z4 Internet Edge must connect into Z2 HQ Edge (firewall ingress)"
+
+    forbidden_inter_domain_flows:
+      - source_domain: "HQ_Edge"
+        target_domain: "InternetEdge"
+        description: "HQ Edge must not initiate back to Internet Edge (no reverse path)"
+
+    attack_flow_zones: ["Z4_InternetEdge", "Z2_HQEdge"]
+
+  # ── S-LIN-01 standalone: Cloud / Linux ────────────────────────────────────
+  slin_cloud_standalone_v1:
+    specialist: S-LIN-01
+    description: "AWS Public Cloud (Z6) — Web / App / Worker / Data tiers"
+
+    domain_count: 4
+    required_domains:
+      - name: "Z6_WebTier"
+        subnet: "10.3.1.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_AppTier"
+        subnet: "10.3.2.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_WorkerTier"
+        subnet: "10.3.3.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_DataTier"
+        subnet: "10.3.4.0/24"
+        globaltech_zone: Z6
+
+    required_zone_groups:
+      Z6_WebTier:
+        - ["AWSWeb", "AWSGitLab", "AWSNginx", "AWSApache", "AWSWordPress", "AWSProxy"]
+      Z6_AppTier:
+        - ["AWSApp", "AWSJenkins", "AWSAuth", "AWSKeycloak", "AWSWorker", "AWSRabbitMQ", "AWSKafka"]
+      Z6_DataTier:
+        - ["AWSRedis", "AWSPostgre", "AWSMySQL", "AWSElastic", "AWSMongo", "AWSData"]
+
+    required_service_properties:
+      - service_pattern: "AWSWebServer"
+        required_properties: ["Linux", "WebServer"]
+      - service_pattern: "AWSGitLab"
+        required_properties: ["Linux", "AppServer"]
+      - service_pattern: "AWSAppServer|AWSJenkins"
+        required_properties: ["Linux", "AppServer"]
+      - service_pattern: "AWSWorkerNode|AWSRabbitMQ"
+        required_properties: ["Linux", "WorkerNode"]
+      - service_pattern: "AWSAuthServer"
+        required_properties: ["Linux", "AuthServer"]
+      - service_pattern: "AWSPostgreSQL|AWSMySQL|AWSRedis|AWSElasticsearch"
+        required_properties: ["Linux", "DatabaseServer"]
+
+    required_inter_domain_flows:
+      - source_domain: "Z6_WebTier"
+        target_domain: "Z6_AppTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["HTTPS", "HTTP", "gRPC"]
+        description: "Web tier must reach App tier (standard 3-tier)"
+      - source_domain: "Z6_AppTier"
+        target_domain: "Z6_WorkerTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["HTTPS", "AMQP", "Kafka", "gRPC"]
+        description: "App tier must dispatch to Worker tier"
+      - source_domain: "Z6_WorkerTier"
+        target_domain: "Z6_DataTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["PostgreSQL", "MySQL", "Redis", "MongoDB"]
+        description: "Worker tier must write to Data tier"
+
+    forbidden_inter_domain_flows:
+      - source_domain: "Z6_WebTier"
+        target_domain: "Z6_DataTier"
+        description: "Web tier must NOT bypass App+Worker to reach Data tier directly"
+      - source_domain: "Z6_DataTier"
+        target_domain: "Z6_WebTier"
+        description: "Database tier must not initiate connections to Web tier"
+
+    attack_flow_zones: ["Z6_WebTier", "Z6_AppTier", "Z6_DataTier"]
+
+  # ── S-LIN-01 meta: Cloud / Linux (meta variant) ───────────────────────────
+  slin_cloud_meta_v1:
+    specialist: S-LIN-01-meta
+    description: "AWS Public Cloud (Z6) — same topology as standalone"
+
+    domain_count: 4
+    required_domains:
+      - name: "Z6_WebTier"
+        subnet: "10.3.1.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_AppTier"
+        subnet: "10.3.2.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_WorkerTier"
+        subnet: "10.3.3.0/24"
+        globaltech_zone: Z6
+      - name: "Z6_DataTier"
+        subnet: "10.3.4.0/24"
+        globaltech_zone: Z6
+
+    required_zone_groups:
+      Z6_WebTier:
+        - ["AWSWeb", "AWSGitLab", "AWSNginx", "AWSApache", "AWSWordPress", "AWSProxy"]
+      Z6_AppTier:
+        - ["AWSApp", "AWSJenkins", "AWSAuth", "AWSKeycloak", "AWSWorker", "AWSRabbitMQ", "AWSKafka"]
+      Z6_DataTier:
+        - ["AWSRedis", "AWSPostgre", "AWSMySQL", "AWSElastic", "AWSMongo", "AWSData"]
+
+    required_service_properties:
+      - service_pattern: "AWSWebServer"
+        required_properties: ["Linux", "WebServer"]
+      - service_pattern: "AWSGitLab"
+        required_properties: ["Linux", "AppServer"]
+      - service_pattern: "AWSAppServer|AWSJenkins"
+        required_properties: ["Linux", "AppServer"]
+      - service_pattern: "AWSWorkerNode|AWSRabbitMQ"
+        required_properties: ["Linux", "WorkerNode"]
+      - service_pattern: "AWSAuthServer"
+        required_properties: ["Linux", "AuthServer"]
+      - service_pattern: "AWSPostgreSQL|AWSMySQL|AWSRedis|AWSElasticsearch"
+        required_properties: ["Linux", "DatabaseServer"]
+
+    required_inter_domain_flows:
+      - source_domain: "Z6_WebTier"
+        target_domain: "Z6_AppTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["HTTPS", "HTTP", "gRPC"]
+        description: "Web tier must reach App tier"
+      - source_domain: "Z6_AppTier"
+        target_domain: "Z6_WorkerTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["HTTPS", "AMQP", "Kafka", "gRPC"]
+        description: "App tier must dispatch to Worker tier"
+      - source_domain: "Z6_WorkerTier"
+        target_domain: "Z6_DataTier"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["PostgreSQL", "MySQL", "Redis", "MongoDB"]
+        description: "Worker tier must write to Data tier"
+
+    forbidden_inter_domain_flows:
+      - source_domain: "Z6_WebTier"
+        target_domain: "Z6_DataTier"
+        description: "Web tier must NOT bypass App+Worker to reach Data tier directly"
+      - source_domain: "Z6_DataTier"
+        target_domain: "Z6_WebTier"
+        description: "Database tier must not initiate connections to Web tier"
+
+    attack_flow_zones: ["Z6_WebTier", "Z6_AppTier", "Z6_DataTier"]
+
+  # ── S-WIN-01: Windows Server Farm ─────────────────────────────────────────
+  swin_serverfarm_standalone_v1:
+    specialist: S-WIN-01
+    description: "Z1 HQ VLANs (workstations) + Z1 Server Farm (AD, file, print, DB)"
+
+    domain_count: 2
+    required_domains:
+      - name: "Z1_HQVLANs"
+        subnet: "10.1.0.0/24"
+        globaltech_zone: Z1
+      - name: "Z1_ServerFarm"
+        subnet: "10.1.10.0/24"
+        globaltech_zone: Z1
+
+    required_zone_groups:
+      Z1_HQVLANs:
+        - ["Sales", "Finance", "RnD", "Admin", "Workstation"]
+        - ["Sales", "Finance", "Admin", "Workstation"]
+      Z1_ServerFarm:
+        - ["DomainController", "DC"]
+        - ["File", "Print", "IIS", "Exchange", "MSSQL", "HyperV", "SharePoint", "RDGateway"]
+
+    required_service_properties:
+      - service_pattern: "DomainController"
+        required_properties: ["Windows", "DomainJoined", "DomainController"]
+
+    required_inter_domain_flows:
+      - source_domain: "Z1_HQVLANs"
+        target_domain: "Z1_ServerFarm"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["SMB", "HTTPS", "RDP", "MSSQL"]
+        description: "Workstations must reach Server Farm (file shares, web apps)"
+
+    forbidden_inter_domain_flows:
+      - source_domain: "Z1_ServerFarm"
+        target_domain: "Z1_HQVLANs"
+        description: "Server Farm must not initiate connections to VLAN workstations"
+
+    attack_flow_zones: ["Z1_HQVLANs", "Z1_ServerFarm"]
+
+  # ── S-ID-01: Active Directory / Identity ──────────────────────────────────
+  sid_ad_standalone_v1:
+    specialist: S-ID-01
+    description: "Z1 HQ VLANs + Z1 Server Farm with ADCS (cert-based AD attacks)"
+
+    domain_count: 2
+    required_domains:
+      - name: "Z1_HQVLANs"
+        subnet: "10.1.0.0/24"
+        globaltech_zone: Z1
+      - name: "Z1_ServerFarm"
+        subnet: "10.1.10.0/24"
+        globaltech_zone: Z1
+
+    required_zone_groups:
+      Z1_HQVLANs:
+        - ["Sales", "Finance", "Admin", "Workstation"]
+      Z1_ServerFarm:
+        - ["DomainController", "DC"]
+        - ["ADCS", "CertificateServer", "PKI"]
+        - ["File", "Print", "IIS", "Exchange", "MSSQL", "HyperV"]
+
+    required_service_properties:
+      - service_pattern: "DomainController"
+        required_properties: ["Windows", "DomainJoined", "DomainController"]
+      - service_pattern: "ADCS"
+        required_properties: ["ADCS", "Windows"]
+
+    required_inter_domain_flows:
+      - source_domain: "Z1_HQVLANs"
+        target_domain: "Z1_ServerFarm"
+        required_relation: "MUST_CONNECT"
+        protocols_any: ["SMB", "HTTPS", "RDP", "MSSQL"]
+        description: "Workstations must reach Server Farm"
+
+    forbidden_inter_domain_flows:
+      - source_domain: "Z1_ServerFarm"
+        target_domain: "Z1_HQVLANs"
+        description: "Server Farm must not initiate connections to VLAN workstations"
+
+    attack_flow_zones: ["Z1_HQVLANs", "Z1_ServerFarm"]
+
+  # ── S-REC-01: Recon / Credential Chain ────────────────────────────────────
+  srec_recon_standalone_v1:
+    specialist: S-REC-01
+    description: "Multi-zone credential chain: Z4 → Z6 → Z1 (single flat domain)"
+
+    domain_count: 1
+    required_domains:
+      - name: "GLOBALTECH_Network"
+        subnet: "10.0.0.0/8"
+        globaltech_zone: Z4_Z6_Z1
+
+    required_zone_groups:
+      Z4_InternetEdge:
+        - ["ISPRouter", "CiscoEdge", "PaloAlto", "WAF", "Juniper", "FortiGate"]
+      Z6_Cloud:
+        - ["AWSWeb", "AWSApp", "AWSRedis", "AWSJenkins", "AWSAuth", "AWSData"]
+      Z1_Corporate:
+        - ["SalesWork", "FinanceWork", "AdminWork", "Workstation"]
+        - ["DomainController", "FileServer", "MSSQLServer"]
+
+    required_service_properties:
+      - service_pattern: "ISPRouter|CiscoEdgeRouter"
+        required_properties: ["NetworkDevice", "Router"]
+
+    # Single-domain config: inter_domain_constraints not applicable.
+    # Topology enforcement is via intra-domain constraints + attack_flow ordering.
+    required_inter_domain_flows: []
+    forbidden_inter_domain_flows: []
+
+    attack_flow_zones: ["Z4_InternetEdge", "Z6_Cloud", "Z1_Corporate"]

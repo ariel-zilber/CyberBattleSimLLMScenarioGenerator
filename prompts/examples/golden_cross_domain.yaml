@@ -1,0 +1,631 @@
+# =============================================================================
+# GOLDEN EXAMPLE: Three-Tier Enterprise Network (DMZ → AppTier → CoreDomain)
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   A three-tier enterprise network that separates public-facing services from
+#   internal application logic and sensitive data. This is the canonical modern
+#   enterprise architecture used by financial institutions, healthcare systems,
+#   and e-commerce platforms.
+#
+# NETWORK TIERS:
+#   [Internet] → DMZ (10.0.1.0/24) → AppTier (10.0.2.0/24) → Core (10.0.3.0/24)
+#
+#   DMZ        : Linux-based web servers and load balancers facing the internet.
+#                Exposed to HTTP/HTTPS. No direct access to Core.
+#   AppTier    : Windows application servers and API gateways on the internal
+#                network. Reachable only from DMZ via HTTPS.
+#   CoreDomain : Windows domain controllers and MSSQL database servers.
+#                Reachable only from AppTier via LDAP/MySQL. Never from DMZ.
+#
+# ATTACKER PROGRESSION:
+#   1. Exploit: Apache RCE or SQL injection against a Linux web server in the DMZ.
+#   2. Pivot:   Steal web application credentials from the web server's config
+#               files to authenticate against AppTier over HTTPS.
+#   3. Escalate: Kerberoast a service account on an AppServer to get DA creds.
+#   4. Goal:   DCSync the DomainController or exfiltrate the MSSQL database.
+#
+# FIREWALL RULES ENFORCED:
+#   - DMZ → AppTier: HTTPS only (TCP 443)
+#   - AppTier → Core: LDAP (TCP 389) and MySQL (TCP 3306)
+#   - DMZ → Core: BLOCKED (no inter_domain_constraints entry)
+#   - Core → DMZ: BLOCKED (no reverse path)
+#
+# DESIGN DECISIONS:
+#   - WebServers run Linux to prevent Windows-specific attacks from the first hop.
+#   - The AppTier is the only pivot point between DMZ and Core, creating a forced
+#     lateral movement path that trains the agent on proper kill-chain discipline.
+#   - inter_domain_constraints strictly enforces the firewall rules.
+#   - No DMZ group appears as source or target in AppTier→Core constraints.
+# =============================================================================
+
+config:
+  min_total_nodes: 40
+  max_total_nodes: 150
+  goal_config:
+    num_goals: 3
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - HTTP
+    - HTTPS
+    - SSH
+    - RDP
+    - LDAP
+    - LDAPS
+    - MySQL
+    - MSSQL
+    - SMB
+    - Kerberos
+    - WinRM
+  standard_ports_extra:
+    - DNS
+    - ICMP
+    - NTP
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # Operating Systems
+    - Windows
+    - Linux
+    - Ubuntu
+    - CentOS
+    - Win2019
+    - Win2022
+    # DMZ Node Types
+    - WebServer
+    - LoadBalancer
+    - NginxServer
+    - ApacheServer
+    - ReverseProxy
+    # AppTier Node Types
+    - AppServer
+    - APIGateway
+    - Middleware
+    - ServiceAccount
+    # Core Node Types
+    - DomainController
+    - DatabaseServer
+    - MSSQLServer
+    # Security Posture
+    - Unpatched
+    - Patched
+    - LibCrypto
+    - WebConfig
+    - Kerberoastable
+    - DomainJoined
+    - DomainAdmin
+    # Data Classification
+    - SensitiveData
+    - CustomerData
+    - AdminCredentials
+    - WebAppCredentials
+
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.50
+  properties:
+    - breach_node
+  default_entry_port: HTTP
+  preferred_entry_ports:
+    - HTTP
+    - HTTPS
+  entry_node_count: 1
+  leaked_node_coverage: 0.10
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Web.Reconnaissance
+      type: LOCAL
+      description: "Web application fingerprinting, port scanning, and subdomain enumeration against the target's DMZ. Identifies exposed HTTP/HTTPS endpoints, server banners, and WAF presence."
+      cost: 0.5
+      success_rate: 0.95
+      reward: "External reconnaissance complete — identified web application entry points and server technology stack"
+    credential_leak:
+      name: External.Web.PublicExploit
+      type: LOCAL
+      description: "Exploits a known CVE in the public-facing web application to read a partial configuration file, leaking an internal service hostname or staging credential."
+      cost: 2.0
+      success_rate: 0.50
+      reward: "Partial web application configuration leaked — internal hostname and staging credential recovered"
+
+attack_flow:
+  - source_pattern: NginxServer
+    targets:
+      - NginxServer
+      - ApacheServer
+      - LoadBalancer
+  - source_pattern: ApacheServer
+    targets:
+      - NginxServer
+      - LoadBalancer
+      - AppServer
+  - source_pattern: LoadBalancer
+    targets:
+      - AppServer
+      - APIGateway
+  - source_pattern: AppServer
+    targets:
+      - APIGateway
+      - DomainController
+      - DatabaseServer
+  - source_pattern: APIGateway
+    targets:
+      - AppServer
+      - DomainController
+  - source_pattern: DomainController
+    targets:
+      - DatabaseServer
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.Network.CredentialHarvest
+    type: LOCAL
+    description: "Searches compromised host for credentials stored in config files, environment variables, browser credential stores, and SSH known_hosts."
+    cost: 1.0
+    success_rate: 0.65
+    reward: "Service credentials harvested from compromised host — lateral movement to {target} enabled"
+    node_probability: 0.45
+    target_coverage: 0.30
+    min_targets: 1
+    default_port: HTTPS
+  leak_neighbors:
+    name: Local.Network.InternalDiscovery
+    type: LOCAL
+    description: "Enumerates internal network hosts via ARP, DNS reverse lookup, and service discovery to map the internal network topology."
+    cost: 0.5
+    success_rate: 0.80
+    reward: "Internal network discovery revealed adjacent host {target} on the internal network"
+    node_probability: 0.55
+    target_coverage: 0.35
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Identifies Linux host via SSH banner, HTTP server headers (Apache/Nginx version), and OS fingerprinting."
+    cost: 0.5
+    success_rate: 0.95
+  - name: Remote.Probe.Windows
+    os: Windows
+    type: REMOTE
+    description: "Identifies Windows host via RDP negotiation, SMB banner, and Kerberos realm discovery."
+    cost: 0.5
+    success_rate: 0.95
+
+solvability_vulnerabilities:
+  remote_access:
+    - name: Solvability.Nginx_LibCrypto_Critical
+      type: REMOTE
+      description: "CVE-2025-15467 Critical libcrypto3 vulnerability in Nginx — unauthenticated RCE via TLS handshake. CVSS 9.8."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Nginx libcrypto RCE (CVE-2025-15467) achieved — Linux shell obtained in DMZ web tier"
+      match_properties:
+        - Linux
+        - WebServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.85
+
+    - name: Solvability.Nginx_LibCrypto_High
+      type: REMOTE
+      description: "CVE-2025-69421 High-severity libcrypto3 vulnerability in Nginx — authentication bypass via OpenSSL. CVSS 7.5."
+      cost: 1.5
+      success_rate: 0.75
+      reward: "Nginx LibCrypto auth bypass (CVE-2025-69421) succeeded — partial read access to DMZ server"
+      match_properties:
+        - Linux
+        - NginxServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.65
+
+  credential_leak:
+    - name: Solvability.WebConfig_AppCredentials
+      type: LOCAL
+      description: "Reads web application configuration files (web.config, .env, application.properties) to extract database connection strings and service account credentials."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "Web application configuration file read — database connection string and service account credentials extracted"
+      match_properties:
+        - Linux
+        - WebServer
+        - WebConfig
+        - WebAppCredentials
+      probability: 0.65
+      target_coverage: 0.40
+      min_targets: 1
+
+    - name: Solvability.Kerberoast_AppServer
+      type: LOCAL
+      description: "Requests a Kerberos TGS ticket for a service account registered on the AppServer and cracks it offline to obtain plaintext service account credentials."
+      cost: 2.0
+      success_rate: 0.58
+      reward: "Kerberoast attack successful — service account TGS ticket cracked, plaintext credentials recovered for AppTier pivot"
+      match_properties:
+        - Windows
+        - AppServer
+        - Kerberoastable
+        - ServiceAccount
+        - DomainJoined
+      probability: 0.58
+      target_coverage: 0.35
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.InternalDNS_Enumeration
+      type: LOCAL
+      description: "Performs internal DNS zone transfers and reverse lookups to enumerate all internal hostnames, identifying AppTier and Core hosts not visible from the DMZ."
+      cost: 0.5
+      success_rate: 0.80
+      reward: "Internal DNS enumeration complete — full list of AppTier and Core hostnames mapped"
+      match_properties:
+        - Linux
+        - WebServer
+        - DomainJoined
+      probability: 0.70
+      target_coverage: 0.45
+      min_targets: 2
+
+    - name: Solvability.ADRecon_AppTier
+      type: LOCAL
+      description: "Runs SharpHound from a compromised AppServer to enumerate Active Directory objects, identify privileged accounts, and map attack paths to DomainControllers."
+      cost: 1.0
+      success_rate: 0.75
+      reward: "SharpHound AD enumeration complete from AppTier — attack paths to DomainController identified"
+      match_properties:
+        - Windows
+        - AppServer
+        - DomainJoined
+      probability: 0.68
+      target_coverage: 0.50
+      min_targets: 2
+
+  goal_access:
+    - name: Solvability.DCSync_DomainController
+      type: LOCAL
+      description: "Abuses replication rights (DS-Replication-Get-Changes-All) to perform a DCSync attack against the DomainController, extracting all NTLM hashes."
+      cost: 3.0
+      success_rate: 0.55
+      reward: "DCSync attack successful — full domain compromise achieved, all NTLM hashes including krbtgt extracted"
+      match_properties:
+        - Windows
+        - DomainController
+        - Win2022
+        - DomainAdmin
+      probability: 0.55
+      goal_category: dump
+
+    - name: Solvability.SQLDump_DatabaseServer
+      type: LOCAL
+      description: "Authenticates to MSSQL using harvested service account credentials and exfiltrates the customer database via xp_cmdshell and bulk export."
+      cost: 2.5
+      success_rate: 0.60
+      reward: "MSSQL database exfiltration complete — customer PII and financial records dumped from Core database server"
+      match_properties:
+        - Windows
+        - DatabaseServer
+        - MSSQLServer
+        - CustomerData
+        - SensitiveData
+      probability: 0.55
+      goal_category: dump
+
+    - name: Solvability.PrivEsc_DomainAdmin
+      type: LOCAL
+      description: "Exploits WriteDACL or GenericAll ACL rights discovered via BloodHound to escalate a compromised service account to Domain Admin privileges."
+      cost: 2.0
+      success_rate: 0.50
+      reward: "ACL-based privilege escalation successful — service account elevated to Domain Admin"
+      match_properties:
+        - Windows
+        - DomainController
+        - AdminCredentials
+      probability: 0.50
+      goal_category: privesc
+
+services:
+  # --- DMZ Services (Linux) ---
+  NginxServer:
+    port: HTTPS
+    value: 200
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Ubuntu
+      - NginxServer
+      - WebServer
+      - LibCrypto
+      - Unpatched
+      - WebConfig
+    is_goal: false
+
+  ApacheServer:
+    port: HTTP
+    value: 250
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - CentOS
+      - ApacheServer
+      - WebServer
+      - LibCrypto
+      - WebConfig
+      - Unpatched
+      - WebAppCredentials
+    is_goal: false
+
+  LoadBalancer:
+    port: HTTPS
+    value: 150
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Ubuntu
+      - LoadBalancer
+      - ReverseProxy
+      - Patched
+    is_goal: false
+
+  # --- AppTier Services (Windows) ---
+  AppServer:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - AppServer
+      - Kerberoastable
+      - ServiceAccount
+      - DomainJoined
+      - Middleware
+    is_goal: false
+
+  APIGateway:
+    port: HTTPS
+    value: 1000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - APIGateway
+      - AppServer
+      - DomainJoined
+    is_goal: false
+
+  # --- Core Services (Windows, Goal Nodes) ---
+  DomainController:
+    port: LDAP
+    value: 10000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2022
+      - DomainController
+      - DomainAdmin
+      - AdminCredentials
+      - DomainJoined
+    is_goal: true
+
+  DatabaseServer:
+    port: MSSQL
+    value: 8000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - DatabaseServer
+      - MSSQLServer
+      - CustomerData
+      - SensitiveData
+      - DomainJoined
+    is_goal: true
+
+domains:
+  # ==========================================================================
+  # TIER 1: DMZ — Internet-facing Linux web servers
+  # ==========================================================================
+  - name: DMZ
+    subnet: 10.0.1.0/24
+    filler:
+      - NginxServer
+      - ApacheServer
+    mandatory_services:
+      - NginxServer
+      - ApacheServer
+      - LoadBalancer
+    groups:
+      - name: NginxServers
+        service: NginxServer
+        min_count: 2
+        max_count: 6
+      - name: ApacheServers
+        service: ApacheServer
+        min_count: 2
+        max_count: 5
+      - name: LoadBalancers
+        service: LoadBalancer
+        min_count: 1
+        max_count: 2
+    constraints:
+      # Enforce unpatched state on Apache servers (required for LibCrypto CVE exploits)
+      - source: ApacheServers
+        target: Unpatched
+        relation: MUST_HAVE
+      # Load balancers distribute traffic to both web server types
+      - source: LoadBalancers
+        target: NginxServers
+        relation: MUST_REACH
+      - source: LoadBalancers
+        target: ApacheServers
+        relation: MUST_REACH
+      # Web servers can discover each other (same subnet)
+      - source: NginxServers
+        target: ApacheServers
+        relation: KNOWS
+      # Apache servers can leak web app credentials (found in config files)
+      - source: ApacheServers
+        target: NginxServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTP
+
+  # ==========================================================================
+  # TIER 2: AppTier — Internal Windows application servers
+  # ==========================================================================
+  - name: AppTier
+    subnet: 10.0.2.0/24
+    filler:
+      - AppServer
+    mandatory_services:
+      - AppServer
+      - APIGateway
+    groups:
+      - name: AppServers
+        service: AppServer
+        min_count: 2
+        max_count: 8
+      - name: APIGateways
+        service: APIGateway
+        min_count: 1
+        max_count: 3
+    constraints:
+      # AppServers are Kerberoastable (service accounts registered)
+      - source: AppServers
+        target: Kerberoastable
+        relation: MUST_HAVE
+      # AppServers and APIGateways communicate internally
+      - source: APIGateways
+        target: AppServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      # APIGateways are clients of AppServers (credential reuse path)
+      - source: APIGateways
+        target: AppServers
+        relation: CLIENT_OF
+        protocol: WinRM
+      # AppServers can discover API gateways
+      - source: AppServers
+        target: APIGateways
+        relation: KNOWS
+
+  # ==========================================================================
+  # TIER 3: CoreDomain — Sensitive Windows infrastructure (Domain Controllers + DB)
+  # ==========================================================================
+  - name: CoreDomain
+    subnet: 10.0.3.0/24
+    filler: []
+    mandatory_services:
+      - DomainController
+      - DatabaseServer
+    groups:
+      - name: DomainControllers
+        service: DomainController
+        min_count: 1
+        max_count: 2
+      - name: DatabaseServers
+        service: DatabaseServer
+        min_count: 1
+        max_count: 3
+    constraints:
+      # Domain controllers replicate between each other
+      - source: DomainControllers
+        target: DomainControllers
+        relation: MUST_REACH
+      # Database servers are clients of domain controllers for auth
+      - source: DatabaseServers
+        target: DomainControllers
+        relation: CLIENT_OF
+        protocol: Kerberos
+      # Domain controllers know about all database servers
+      - source: DomainControllers
+        target: DatabaseServers
+        relation: KNOWS
+
+# =============================================================================
+# INTER-DOMAIN CONSTRAINTS — Enforces the firewall segmentation between tiers
+# NOTE: There is NO DMZ → CoreDomain entry. That connection is BLOCKED.
+# =============================================================================
+inter_domain_constraints:
+  # TIER 1 → TIER 2: DMZ web servers can only reach AppTier over HTTPS
+  - source_domain: DMZ
+    target_domain: AppTier
+    constraints:
+      - source: NginxServers
+        target: AppServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: ApacheServers
+        target: AppServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: LoadBalancers
+        target: APIGateways
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      # Web servers can leak web app credentials to AppServers
+      # (stored in environment variables, Docker secrets, config files)
+      - source: ApacheServers
+        target: AppServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+
+  # TIER 2 → TIER 3: AppServers can reach Core over LDAP and MySQL only
+  # DMZ hosts are NOT listed here — they have no path to Core.
+  - source_domain: AppTier
+    target_domain: CoreDomain
+    constraints:
+      - source: AppServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      - source: AppServers
+        target: DatabaseServers
+        relation: MUST_CONNECT
+        protocol: MySQL
+      - source: APIGateways
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      # AppServers are clients of DomainControllers (Kerberos auth path)
+      - source: AppServers
+        target: DomainControllers
+        relation: CLIENT_OF
+        protocol: Kerberos
+      # AppServers can leak service credentials to database servers
+      - source: AppServers
+        target: DatabaseServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MySQL
+
+entry_points:
+  - domain: DMZ
+    node: ApacheServers
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.50
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

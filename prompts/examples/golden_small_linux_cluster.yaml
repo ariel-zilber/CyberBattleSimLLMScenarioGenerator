@@ -1,0 +1,481 @@
+# =============================================================================
+# GOLDEN EXAMPLE: Small Linux Microservices Cluster (≤ 30 nodes)
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   A startup production cluster on a single /24 subnet: Nginx as the
+#   internet-facing reverse proxy, HashiCorp Vault for secrets management,
+#   Grafana for monitoring, and Redis/MongoDB as data stores. All services run
+#   on Linux containers scanned for real CVEs (bitnami chart data).
+#
+# ATTACKER PROGRESSION:
+#   1. Entry:    Exploit Nginx libcrypto RCE (CVE-2025-15467, CVSS 9.8) against
+#                the public-facing reverse proxy — unauthenticated shell obtained.
+#   2. Harvest:  Extract a Vault service token from Nginx container environment
+#                variables and mounted config files.
+#   3. Escalate: Exploit Vault Go stdlib RCE (CVE-2024-41110, CVSS 9.9) to dump
+#                all secret engine values: Redis password + MongoDB URI.
+#   4. Goal:     Authenticate to Redis (session cache / SensitiveData) OR MongoDB
+#                (customer DB / CustomerData) with stolen credentials.
+#
+# DESIGN DECISIONS:
+#   - Single domain, one /24 subnet — no inter_domain_constraints required.
+#   - All CVE-backed success_rate values copied verbatim from vulnerability_catalog.md.
+#   - VaultServer is the mandatory pivot: the data stores are unreachable without
+#     its secrets, forcing the agent to learn a 3–4 hop kill chain.
+#   - GoRuntime property enables multiple CVE-backed exploits on Vault and Grafana.
+#   - LibCrypto property enables Nginx entry CVE.
+#   - max_total_nodes: 30 — compact training scenario.
+# =============================================================================
+
+config:
+  min_total_nodes: 12
+  max_total_nodes: 30
+  goal_config:
+    num_goals: 2
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - HTTPS
+    - HTTP
+    - SSH
+    - Redis
+    - MongoDB
+    - VaultAPI
+    - Grafana
+  standard_ports_extra:
+    - DNS
+    - ICMP
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # Operating System
+    - Linux
+    - Ubuntu
+    - Debian
+    # Node Roles
+    - WebServer
+    - AppServer
+    - DatabaseServer
+    # CVE-backed container properties (bitnami scans)
+    - GoRuntime
+    - LibCrypto
+    - MongoDB
+    - Redis
+    # Data / Access markers
+    - ServiceToken
+    - SensitiveData
+    - CustomerData
+    - AdminCredentials
+    # Patch state
+    - Unpatched
+    - Patched
+
+os_management_ports:
+  Linux: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.20
+  properties:
+    - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+    - HTTPS
+    - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.15
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.Web.TLSFingerprint
+      type: LOCAL
+      description: "HTTP/TLS banner grabbing and Shodan-style recon to identify the Nginx reverse proxy, its OpenSSL version, and exposed service hostnames."
+      cost: 0.5
+      success_rate: 0.95
+      reward: "Nginx reverse proxy identified — version, TLS fingerprint, and exposed endpoints enumerated"
+    credential_leak:
+      name: External.Web.StatusPageLeak
+      type: LOCAL
+      description: "Exploits a misconfigured Nginx stub_status or debug endpoint to leak internal service hostnames and a partial Vault token from HTTP headers."
+      cost: 1.5
+      success_rate: 0.55
+      reward: "Nginx debug endpoint leaked internal Vault hostname and partial API token"
+
+attack_flow:
+  - source_pattern: NginxProxy
+    targets:
+      - VaultServer
+      - GrafanaServer
+  - source_pattern: GrafanaServer
+    targets:
+      - VaultServer
+  - source_pattern: VaultServer
+    targets:
+      - RedisServer
+      - MongoDBServer
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.Linux.EnvCredExtract
+    type: LOCAL
+    description: "Searches the compromised Linux container's filesystem for credentials stored in environment variables, mounted secret files, and app config (e.g., /etc/vault-agent/config.hcl, .env, docker-compose.yml)."
+    cost: 1.0
+    success_rate: 0.68
+    reward: "Service credential extracted from container environment — lateral access to {target} enabled"
+    node_probability: 0.55
+    target_coverage: 0.35
+    min_targets: 1
+    default_port: HTTPS
+  leak_neighbors:
+    name: Local.Linux.ContainerNetScan
+    type: LOCAL
+    description: "Runs nmap or docker network ls inside a compromised container to enumerate peer services reachable on the cluster overlay network."
+    cost: 0.5
+    success_rate: 0.82
+    reward: "Container network scan revealed adjacent service {target} on the cluster subnet"
+    node_probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Identifies a Linux host via SSH banner, HTTP server headers (Nginx/OpenSSL version string), and TLS certificate SAN fields."
+    cost: 0.5
+    success_rate: 0.95
+
+solvability_vulnerabilities:
+  remote_access:
+    # ── Web Tier: Nginx LibCrypto CVE ─────────────────────────────────────────
+    - name: Solvability.Nginx_LibCrypto_Critical
+      type: REMOTE
+      description: "CVE-2025-15467 Critical libcrypto3 vulnerability in Nginx — unauthenticated RCE via malformed TLS ClientHello. CVSS 9.8. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Nginx libcrypto RCE (CVE-2025-15467) achieved — unauthenticated Linux shell on web proxy"
+      match_properties:
+        - Linux
+        - WebServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.85
+
+    - name: Solvability.Nginx_LibCrypto_High
+      type: REMOTE
+      description: "CVE-2025-69421 High-severity libcrypto3 auth-bypass in Nginx — allows reading protected upstream responses. CVSS 7.5. SR=0.75 per CVE formula."
+      cost: 1.5
+      success_rate: 0.75
+      reward: "Nginx LibCrypto auth bypass (CVE-2025-69421) — partial read access to proxied internal responses"
+      match_properties:
+        - Linux
+        - WebServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.65
+
+    # ── App Tier: Vault + Grafana GoRuntime CVEs ──────────────────────────────
+    - name: Solvability.Vault_GoStdlib
+      type: REMOTE
+      description: "CVE-2024-41110 Critical Go stdlib RCE in HashiCorp Vault — arbitrary code execution via crafted HTTP/2 frame. CVSS 9.9. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Vault Go stdlib RCE (CVE-2024-41110) achieved — secrets engine shell obtained, all vault paths accessible"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - Unpatched
+      probability: 0.85
+
+    - name: Solvability.Grafana_GoStdlib
+      type: REMOTE
+      description: "CVE-2026-33186 High-severity Go stdlib RCE in Grafana — exploits HTTP/2 stream multiplexing flaw. CVSS 8.1. SR=0.81 per CVE formula."
+      cost: 1.5
+      success_rate: 0.81
+      reward: "Grafana Go stdlib RCE (CVE-2026-33186) achieved — monitoring server compromised, data-source credentials visible"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - Unpatched
+      probability: 0.65
+
+  credential_leak:
+    - name: Solvability.VaultToken_EnvExtract
+      type: LOCAL
+      description: "Reads VAULT_TOKEN and VAULT_ADDR environment variables from the compromised Nginx container. These tokens are injected by orchestration platforms (k8s, docker-compose) to allow the proxy to authenticate to Vault."
+      cost: 1.0
+      success_rate: 0.68
+      reward: "Vault service token extracted from Nginx container environment — all secret engine paths now readable"
+      match_properties:
+        - Linux
+        - WebServer
+        - ServiceToken
+      probability: 0.65
+      target_coverage: 0.40
+      min_targets: 1
+
+    - name: Solvability.VaultSecretDump
+      type: LOCAL
+      description: "Authenticates to Vault using a stolen service token and performs vault kv list + vault kv get recursively across all secret engines, dumping Redis passwords, MongoDB URIs, and API keys."
+      cost: 1.5
+      success_rate: 0.62
+      reward: "Vault secrets engine dumped — Redis AUTH password and MongoDB connection URI recovered"
+      match_properties:
+        - Linux
+        - AppServer
+        - ServiceToken
+        - GoRuntime
+      probability: 0.60
+      target_coverage: 0.50
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.ClusterServiceEnum
+      type: LOCAL
+      description: "Runs nmap, curl, and dns-lookup from inside a compromised web container to enumerate all cluster services. Identifies Redis, MongoDB, Vault, and Grafana endpoints by their well-known ports."
+      cost: 0.5
+      success_rate: 0.85
+      reward: "Cluster-wide service enumeration complete — Redis, MongoDB, Vault, and Grafana endpoints discovered and mapped"
+      match_properties:
+        - Linux
+        - WebServer
+      probability: 0.70
+      target_coverage: 0.50
+      min_targets: 2
+
+    - name: Solvability.GrafanaDashboardLeak
+      type: LOCAL
+      description: "Queries Grafana's data source proxy API (/api/datasources/proxy) from a compromised app container to extract connection strings for Redis and MongoDB visible in existing dashboards."
+      cost: 1.0
+      success_rate: 0.72
+      reward: "Grafana data-source proxy leak revealed Redis and MongoDB connection strings embedded in dashboards"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+      probability: 0.60
+      target_coverage: 0.40
+      min_targets: 1
+
+  goal_access:
+    - name: Solvability.Redis_CredentialAccess
+      type: LOCAL
+      description: "Authenticates to Redis using the AUTH password extracted from Vault secrets, then executes KEYS *, GET, and DUMP commands to exfiltrate all session tokens, cached API responses, and sensitive user data."
+      cost: 1.5
+      success_rate: 0.62
+      reward: "Redis authenticated with Vault-issued credentials — all session keys and sensitive cached data exfiltrated"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - Redis
+        - SensitiveData
+      probability: 0.65
+      goal_category: dump
+
+    - name: Solvability.MongoDB_CredentialDump
+      type: LOCAL
+      description: "Connects to MongoDB using the URI extracted from Vault secrets engine and runs mongodump to export all collections including customer PII, transaction records, and internal metadata."
+      cost: 2.0
+      success_rate: 0.58
+      reward: "MongoDB customer database fully exfiltrated — all collections dumped using Vault-issued credentials"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - MongoDB
+        - CustomerData
+      probability: 0.60
+      goal_category: dump
+
+services:
+  # ── Web Tier ──────────────────────────────────────────────────────────────
+  NginxProxy:
+    port: HTTPS
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Ubuntu
+      - WebServer
+      - LibCrypto
+      - ServiceToken
+      - Unpatched
+    is_goal: false
+
+  # ── App Tier ──────────────────────────────────────────────────────────────
+  VaultServer:
+    port: VaultAPI
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Ubuntu
+      - AppServer
+      - GoRuntime
+      - ServiceToken
+      - AdminCredentials
+      - Unpatched
+    is_goal: false
+
+  GrafanaServer:
+    port: Grafana
+    value: 500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Ubuntu
+      - AppServer
+      - GoRuntime
+      - Unpatched
+    is_goal: false
+
+  # ── Data Tier (Goals) ─────────────────────────────────────────────────────
+  RedisServer:
+    port: Redis
+    value: 8000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - DatabaseServer
+      - Redis
+      - GoRuntime
+      - SensitiveData
+      - Patched
+    is_goal: true
+
+  MongoDBServer:
+    port: MongoDB
+    value: 10000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - DatabaseServer
+      - MongoDB
+      - GoRuntime
+      - CustomerData
+      - SensitiveData
+      - Patched
+    is_goal: true
+
+domains:
+  - name: SmallLinuxCluster
+    subnet: 10.0.10.0/24
+    filler:
+      - NginxProxy
+      - GrafanaServer
+    mandatory_services:
+      - NginxProxy
+      - VaultServer
+      - GrafanaServer
+      - RedisServer
+      - MongoDBServer
+    groups:
+      - name: NginxProxies
+        service: NginxProxy
+        min_count: 2
+        max_count: 6
+      - name: VaultServers
+        service: VaultServer
+        min_count: 1
+        max_count: 2
+      - name: GrafanaServers
+        service: GrafanaServer
+        min_count: 1
+        max_count: 3
+      - name: RedisServers
+        service: RedisServer
+        min_count: 1
+        max_count: 2
+      - name: MongoDBServers
+        service: MongoDBServer
+        min_count: 1
+        max_count: 3
+    constraints:
+      # Entry nodes must be unpatched (LibCrypto CVEs require it)
+      - source: NginxProxies
+        target: Unpatched
+        relation: MUST_HAVE
+      # App tier must be unpatched (GoStdlib CVEs require it)
+      - source: VaultServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: GrafanaServers
+        target: Unpatched
+        relation: MUST_HAVE
+      # Nginx proxies route traffic to Vault and Grafana
+      - source: NginxProxies
+        target: VaultServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      - source: NginxProxies
+        target: GrafanaServers
+        relation: MUST_CONNECT
+        protocol: HTTPS
+      # Grafana reads metrics from databases
+      - source: GrafanaServers
+        target: RedisServers
+        relation: MUST_REACH
+        protocol: Redis
+      - source: GrafanaServers
+        target: MongoDBServers
+        relation: MUST_REACH
+        protocol: MongoDB
+      # Vault connects to and manages credentials for both data stores
+      - source: VaultServers
+        target: RedisServers
+        relation: MUST_CONNECT
+        protocol: Redis
+      - source: VaultServers
+        target: MongoDBServers
+        relation: MUST_CONNECT
+        protocol: MongoDB
+      - source: VaultServers
+        target: RedisServers
+        relation: CLIENT_OF
+        protocol: Redis
+      - source: VaultServers
+        target: MongoDBServers
+        relation: CLIENT_OF
+        protocol: MongoDB
+      # Nginx carries Vault service tokens — attacker's credential path
+      - source: NginxProxies
+        target: VaultServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: HTTPS
+      # Vault issues credentials to data stores — pivot path after Vault compromise
+      - source: VaultServers
+        target: RedisServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: Redis
+      - source: VaultServers
+        target: MongoDBServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MongoDB
+
+entry_points:
+  - domain: SmallLinuxCluster
+    node: NginxProxies
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.50
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

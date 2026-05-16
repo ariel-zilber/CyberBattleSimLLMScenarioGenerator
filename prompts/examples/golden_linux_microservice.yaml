@@ -1,0 +1,950 @@
+# =============================================================================
+# GOLDEN EXAMPLE: Full 5-Tier Linux Microservices Enterprise Stack
+# =============================================================================
+#
+# SCENARIO OVERVIEW:
+#   A production-grade enterprise running entirely on Linux containers across
+#   five isolated network zones (Bitnami/Helm chart stack). Two parallel attack
+#   paths exist — one through WordPress ImageMagick RCE, one through Nginx
+#   LibCrypto — converging at HashiCorp Vault, then fanning out to Keycloak.
+#   All CVE parameters are from data/vulnerability_db/bitnami_cves.json via the
+#   formula: success_rate = cvss/10 × (0.7 if AC=HIGH), clamped [0.30, 0.90].
+#
+# ATTACKER PROGRESSION (primary chain):
+#   1. Entry:    Nginx LibCrypto RCE (CVE-2025-15467, CVSS 9.8, SR=0.90)
+#                against the public reverse proxy. Unauthenticated shell.
+#   2. Harvest:  Read wp-config.php via WordPress credential-leak technique
+#                (always present; SR=0.75). Recovers MySQL password.
+#   3. Pivot:    Authenticate to MySQLServer in DataTier using stolen creds.
+#   4. Escalate: Exploit Vault GoStdlib RCE (CVE-2024-41110, CVSS 9.9, SR=0.90)
+#                from AppTier. Dump Vault secrets: Keycloak admin password.
+#   5. Goal:     Keycloak SSRF (CVE-2026-1486, CVSS 8.8, SR=0.88) → dump all
+#                realm users and OAuth2 client secrets (KeycloakServer, goal).
+#
+# SECONDARY CHAIN (higher depth, needed for agent curriculum):
+#   1. WordPress ImageMagick RCE (CVE-2026-22770, CVSS 9.8, SR=0.90).
+#   2. Extract Airflow DAG connection string (WorkerTier).
+#   3. Pivot to Kafka broker (WorkerTier) via extracted SASL credentials.
+#   4. Consume sensitive Kafka topics: Keycloak event stream (goal category: dump).
+#
+# DESIGN DECISIONS:
+#   - Five separate domains with strict inter_domain_constraints. WebTier is the
+#     only zone reachable from the internet. No DMZ-to-DataTier direct path.
+#   - AuthTier (Keycloak) receives traffic ONLY from AppTier. WebTier cannot
+#     reach AuthTier directly — OAuth flows must proxy through Kong (AppTier).
+#   - WorkerTier connects only to DataTier (Kafka → MongoDB event stream).
+#   - VaultServer is the mandatory credential pivot: no DataTier goal is reachable
+#     without Vault secrets, and no AuthTier goal is reachable without Vault-issued
+#     Keycloak admin credentials.
+#   - MySQL is not a goal: it is an intermediate credential-store pivot only.
+#   - All success_rate values copied verbatim from vulnerability_catalog.md §
+#     "Linux / Container Remote Exploits [CVE-backed]". Do NOT adjust.
+#   - max_total_nodes: 80 — medium-large training scenario.
+# =============================================================================
+
+config:
+  min_total_nodes: 35
+  max_total_nodes: 80
+  goal_config:
+    num_goals: 2
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - HTTPS
+    - HTTP
+    - SSH
+    - MySQL
+    - MongoDB
+    - Redis
+    - Kafka
+    - VaultAPI
+    - KeycloakHTTPS
+    - AirflowHTTP
+    - JenkinsHTTPS
+  standard_ports_extra:
+    - DNS
+    - AMQP
+    - ICMP
+    - Prometheus
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # Operating System
+    - Linux
+    - Debian
+    - Ubuntu
+    - Alpine
+    # Node roles (shared)
+    - WebServer
+    - AppServer
+    - DatabaseServer
+    - WorkerNode
+    - AuthServer
+    - MessageBroker
+    # CVE-backed properties (bitnami scans)
+    - GoRuntime
+    - LibCrypto
+    - ImageMagick
+    - Java
+    - Python
+    - PHP
+    # Service-specific properties
+    - MySQL
+    - MongoDB
+    - Redis
+    - WordPressInstall
+    - KeycloakService
+    # Security / access markers
+    - SensitiveData
+    - AdminCredentials
+    - ServiceToken
+    - Misconfigured
+    - Unpatched
+    - Patched
+    # Data classification
+    - CustomerData
+    - IdentityData
+
+os_management_ports:
+  Linux: SSH
+  default: SSH
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.55
+  properties:
+    - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+    - HTTPS
+    - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.10
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.TLS.Fingerprint
+      type: LOCAL
+      description: "HTTP/TLS banner grabbing and certificate SAN enumeration to identify the Nginx reverse proxy version, OpenSSL build, and exposed virtual hostnames (wordpress, drupal subdomains)."
+      cost: 0.5
+      success_rate: 0.95
+      reward: "Nginx reverse proxy identified — TLS fingerprint, OpenSSL version, and exposed vhost names enumerated"
+    credential_leak:
+      name: External.Web.GitExposure
+      type: LOCAL
+      description: "Checks for exposed .git directories, debug endpoints, and phpinfo.php on the web tier. Recovers a partial service token from a misconfigured WordPress debug page."
+      cost: 1.5
+      success_rate: 0.52
+      reward: "WordPress debug endpoint exposed partial Vault service token and internal MySQL hostname"
+
+attack_flow:
+  # WebTier pivots into AppTier
+  - source_pattern: NginxProxy
+    targets:
+      - WordPressServer
+      - JenkinsServer
+  - source_pattern: WordPressServer
+    targets:
+      - MySQLServer
+      - VaultServer
+  # AppTier internal
+  - source_pattern: JenkinsServer
+    targets:
+      - VaultServer
+      - GrafanaServer
+  - source_pattern: GrafanaServer
+    targets:
+      - VaultServer
+  - source_pattern: VaultServer
+    targets:
+      - MySQLServer
+      - MongoDBServer
+      - KeycloakServer
+  # DataTier → AuthTier via Vault-issued Keycloak admin creds
+  - source_pattern: MySQLServer
+    targets:
+      - KeycloakServer
+  # WorkerTier paths
+  - source_pattern: AirflowServer
+    targets:
+      - KafkaServer
+      - MongoDBServer
+  - source_pattern: KafkaServer
+    targets:
+      - KeycloakServer
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.Linux.ContainerEnvExtract
+    type: LOCAL
+    description: "Searches a compromised Linux container for credentials in environment variables, mounted Kubernetes secrets, .env files, docker-compose.yml, and app config directories (e.g., /etc/vault-agent/, wp-config.php, airflow.cfg)."
+    cost: 1.0
+    success_rate: 0.65
+    reward: "Container credential extracted — lateral access to {target} enabled via env var or config file"
+    node_probability: 0.55
+    target_coverage: 0.40
+    min_targets: 1
+    default_port: HTTPS
+  leak_neighbors:
+    name: Local.Linux.ClusterNetScan
+    type: LOCAL
+    description: "Runs nmap, curl, and dns-lookup from inside a compromised container to enumerate peer services on all cluster overlay subnets. Identifies inter-tier endpoints by port and TLS certificate."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Cluster network scan revealed adjacent service {target} — endpoint address, port, and service type identified"
+    node_probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Identifies a Linux host via SSH banner, HTTP/HTTPS server headers (Nginx/OpenSSL/Java version strings), and TLS certificate SAN fields."
+    cost: 0.5
+    success_rate: 0.95
+
+solvability_vulnerabilities:
+  remote_access:
+    # ── Web Tier: Nginx LibCrypto ─────────────────────────────────────────────
+    - name: Solvability.Nginx_LibCrypto_Critical
+      type: REMOTE
+      description: "CVE-2025-15467 Critical libcrypto3 vulnerability in Nginx — unauthenticated RCE via malformed TLS ClientHello. CVSS 9.8, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Nginx libcrypto RCE (CVE-2025-15467) achieved — unauthenticated Linux shell on public reverse proxy"
+      match_properties:
+        - Linux
+        - WebServer
+        - LibCrypto
+        - Unpatched
+      probability: 0.85
+
+    # ── Web Tier: WordPress ImageMagick ──────────────────────────────────────
+    - name: Solvability.WordPress_ImageMagick
+      type: REMOTE
+      description: "CVE-2026-22770 Critical ImageMagick RCE in WordPress media upload endpoint — malicious image triggers arbitrary code execution as www-data. CVSS 9.8, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "WordPress ImageMagick RCE (CVE-2026-22770) achieved — shell as www-data, wp-config.php readable"
+      match_properties:
+        - Linux
+        - WebServer
+        - PHP
+        - ImageMagick
+        - WordPressInstall
+        - Unpatched
+      probability: 0.85
+
+    # ── App Tier: HashiCorp Vault GoStdlib ───────────────────────────────────
+    - name: Solvability.Vault_GoStdlib
+      type: REMOTE
+      description: "CVE-2024-41110 Critical Go stdlib RCE in HashiCorp Vault — arbitrary code execution via crafted HTTP/2 frame sequence. CVSS 9.9, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Vault Go stdlib RCE (CVE-2024-41110) achieved — shell on secrets manager, all vault KV paths accessible"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - Unpatched
+      probability: 0.85
+
+    # ── App Tier: Jenkins Java ────────────────────────────────────────────────
+    - name: Solvability.Jenkins_OpenJDK_RCE
+      type: REMOTE
+      description: "CVE-2025-50059 High-severity OpenJDK RCE in Jenkins CI — Java deserialization via crafted Remoting protocol message. CVSS 8.6, AC=LOW. SR=0.86 per CVE formula."
+      cost: 1.5
+      success_rate: 0.86
+      reward: "Jenkins OpenJDK RCE (CVE-2025-50059) achieved — CI/CD server shell, all pipeline credentials accessible"
+      match_properties:
+        - Linux
+        - AppServer
+        - Java
+        - Unpatched
+      probability: 0.65
+
+    # ── App Tier: Grafana GoRuntime ───────────────────────────────────────────
+    - name: Solvability.Grafana_GoStdlib
+      type: REMOTE
+      description: "CVE-2026-33186 High-severity Go stdlib HTTP/2 RCE in Grafana monitoring server. CVSS 8.1, AC=LOW. SR=0.81 per CVE formula."
+      cost: 1.5
+      success_rate: 0.81
+      reward: "Grafana Go stdlib RCE (CVE-2026-33186) achieved — monitoring server shell, data source credentials visible"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - Unpatched
+      probability: 0.65
+
+    # ── Data Tier: MongoDB GoStdlib ───────────────────────────────────────────
+    - name: Solvability.MongoDB_GoStdlib
+      type: REMOTE
+      description: "CVE-2025-68121 Critical Go stdlib RCE in MongoDB 8.0 — network-level code execution via malformed BSON wire protocol frame. CVSS 10.0, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "MongoDB Go stdlib RCE (CVE-2025-68121) achieved — full BSON database shell, all collections accessible"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - MongoDB
+        - GoRuntime
+        - Unpatched
+      probability: 0.85
+
+    # ── Auth Tier: Keycloak SSRF ──────────────────────────────────────────────
+    - name: Solvability.Keycloak_SSRF
+      type: REMOTE
+      description: "CVE-2026-1486 High-severity SSRF in Keycloak identity broker — crafted redirect URI triggers server-side request to internal admin REST API, bypassing auth. CVSS 8.8, AC=LOW. SR=0.88 per CVE formula."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "Keycloak SSRF (CVE-2026-1486) achieved — identity server admin API accessible via forged redirect"
+      match_properties:
+        - Linux
+        - AuthServer
+        - Java
+        - KeycloakService
+        - Unpatched
+      probability: 0.65
+
+    # ── Worker Tier: Airflow Python ───────────────────────────────────────────
+    - name: Solvability.Airflow_Python_RCE
+      type: REMOTE
+      description: "CVE-2024-12084 Critical Python runtime RCE in Apache Airflow — arbitrary code execution via malicious DAG upload to the web UI (no auth required in misconfigured deployments). CVSS 9.8, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Airflow Python RCE (CVE-2024-12084) achieved — DAG worker shell, all Airflow connection strings accessible"
+      match_properties:
+        - Linux
+        - WorkerNode
+        - Python
+        - Misconfigured
+        - Unpatched
+      probability: 0.80
+
+    # ── Worker Tier: Kafka Java ───────────────────────────────────────────────
+    - name: Solvability.Kafka_LibXML_RCE
+      type: REMOTE
+      description: "CVE-2024-56171 Critical libxml2 RCE in Kafka broker — malformed XML in Kafka Connect REST API triggers arbitrary code execution. CVSS 9.8, AC=LOW. SR=0.90 per CVE formula."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "Kafka libxml2 RCE (CVE-2024-56171) achieved — broker shell, all topic offsets and SASL credentials accessible"
+      match_properties:
+        - Linux
+        - WorkerNode
+        - Java
+        - Unpatched
+      probability: 0.80
+
+  credential_leak:
+    # WordPress credential extraction techniques
+    - name: Solvability.WordPress_ConfigLeak
+      type: LOCAL
+      description: "Reads /var/www/html/wp-config.php from a compromised WordPress shell. Always contains DB_HOST, DB_NAME, DB_USER, DB_PASSWORD in plaintext — standard WordPress installation requirement."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "wp-config.php read — MySQL credentials (host, user, password, db name) recovered for DataTier pivot"
+      match_properties:
+        - Linux
+        - WebServer
+        - PHP
+        - WordPressInstall
+      probability: 0.65
+      target_coverage: 0.50
+      min_targets: 1
+
+    # Vault credential dump techniques
+    - name: Solvability.VaultSecretsDump
+      type: LOCAL
+      description: "Authenticates to Vault API using a stolen service token or GoStdlib shell, then runs vault kv list + vault kv get recursively across all secret engines. Recovers Keycloak admin password, MySQL root password, MongoDB URI, and Kafka SASL credentials."
+      cost: 1.5
+      success_rate: 0.62
+      reward: "Vault secrets engine fully dumped — Keycloak admin password, MySQL root, MongoDB URI, and Kafka SASL credentials recovered"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+        - ServiceToken
+      probability: 0.60
+      target_coverage: 0.60
+      min_targets: 2
+
+    # Jenkins credential extraction
+    - name: Solvability.Jenkins_CredentialStore
+      type: LOCAL
+      description: "Reads Jenkins credentials.xml and secrets/ directory from a compromised CI server. Contains Git tokens, Vault tokens, and Kubernetes service account JWTs stored by the CI pipeline."
+      cost: 1.0
+      success_rate: 0.72
+      reward: "Jenkins credential store extracted — Vault token and Kubernetes service account JWT recovered for AppTier pivot"
+      match_properties:
+        - Linux
+        - AppServer
+        - Java
+      probability: 0.65
+      target_coverage: 0.45
+      min_targets: 1
+
+    # Airflow connection string extraction
+    - name: Solvability.Airflow_ConnStrings
+      type: LOCAL
+      description: "Reads Airflow connection strings from the metadata database (airflow.cfg → SQL Alchemy URI → airflow db) or the Airflow web UI /api/v1/connections endpoint. Contains Kafka SASL creds, MongoDB URI, and MySQL password."
+      cost: 1.0
+      success_rate: 0.65
+      reward: "Airflow connection strings extracted — Kafka SASL, MongoDB URI, and MySQL password recovered"
+      match_properties:
+        - Linux
+        - WorkerNode
+        - Python
+      probability: 0.60
+      target_coverage: 0.40
+      min_targets: 1
+
+    # MongoDB unauthenticated access (Misconfigured)
+    - name: Solvability.MongoDB_NoAuth
+      type: LOCAL
+      description: "Connects to MongoDB using default --bind_ip_all without authentication. Standard MongoDB ships with no auth enabled by default. Enumerates all databases and collections without credentials."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "MongoDB unauthenticated connection established — all databases and collections enumerable without credentials"
+      match_properties:
+        - Linux
+        - DatabaseServer
+        - MongoDB
+        - Misconfigured
+      probability: 0.65
+      target_coverage: 0.50
+      min_targets: 1
+
+    # Grafana datasource credential extraction
+    - name: Solvability.Grafana_DataSourceLeak
+      type: LOCAL
+      description: "Queries Grafana /api/datasources endpoint from a compromised app shell. Grafana.db stores data source passwords in plaintext — returns MySQL, MongoDB, and Elasticsearch connection strings."
+      cost: 1.0
+      success_rate: 0.70
+      reward: "Grafana data source credentials extracted — MySQL, MongoDB, and Elasticsearch connection strings recovered from grafana.db"
+      match_properties:
+        - Linux
+        - AppServer
+        - GoRuntime
+      probability: 0.60
+      target_coverage: 0.45
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.ContainerNetworkEnum
+      type: LOCAL
+      description: "Runs nmap from inside a compromised container on the cluster overlay network (172.x or 10.x) to enumerate all reachable services. Identifies MySQL (3306), MongoDB (27017), Redis (6379), Kafka (9092), Vault (8200), and Keycloak (8080/8443)."
+      cost: 0.5
+      success_rate: 0.88
+      reward: "Container network enumeration complete — all data tier and app tier service endpoints discovered and port-mapped"
+      match_properties:
+        - Linux
+        - WebServer
+      probability: 0.80
+      target_coverage: 0.60
+      min_targets: 2
+
+    - name: Solvability.KubernetesServiceDiscovery
+      type: LOCAL
+      description: "Reads /etc/resolv.conf and queries CoreDNS to enumerate Kubernetes service names. Lists all services in the cluster namespace, resolving internal DNS to IP mappings for DataTier and AuthTier services."
+      cost: 0.5
+      success_rate: 0.85
+      reward: "Kubernetes service discovery via CoreDNS — all service FQDN-to-IP mappings recovered for cluster namespace"
+      match_properties:
+        - Linux
+        - AppServer
+      probability: 0.75
+      target_coverage: 0.55
+      min_targets: 2
+
+  goal_access:
+    - name: Solvability.Keycloak_IdentityDump
+      type: LOCAL
+      description: "Authenticates to Keycloak admin REST API using stolen admin credentials (from Vault dump or SSRF). Exports all realm users, group memberships, OAuth2 client secrets, and OIDC signing keys. Complete identity provider compromise."
+      cost: 2.0
+      success_rate: 0.55
+      reward: "Keycloak identity provider fully compromised — all realm users, OAuth2 client secrets, and OIDC signing keys exfiltrated"
+      match_properties:
+        - Linux
+        - AuthServer
+        - KeycloakService
+        - AdminCredentials
+        - IdentityData
+      probability: 0.65
+      goal_category: dump
+
+    - name: Solvability.Kafka_TopicExfil
+      type: LOCAL
+      description: "Consumes all messages from sensitive Kafka topics (keycloak.events, user.activity, payment.transactions) using kafkacat or Kafka consumer API with stolen SASL/PLAIN credentials."
+      cost: 1.5
+      success_rate: 0.60
+      reward: "Kafka sensitive topics consumed — Keycloak event stream, user activity logs, and financial transaction records exfiltrated"
+      match_properties:
+        - Linux
+        - WorkerNode
+        - Java
+        - SensitiveData
+      probability: 0.60
+      goal_category: dump
+
+services:
+  # ── Web Tier ──────────────────────────────────────────────────────────────
+  NginxProxy:
+    port: HTTPS
+    value: 300
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Alpine
+      - WebServer
+      - LibCrypto
+      - ServiceToken
+      - Unpatched
+    is_goal: false
+
+  WordPressServer:
+    port: HTTPS
+    value: 500
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - WebServer
+      - PHP
+      - ImageMagick
+      - WordPressInstall
+      - Unpatched
+    is_goal: false
+
+  # ── App Tier ──────────────────────────────────────────────────────────────
+  JenkinsServer:
+    port: JenkinsHTTPS
+    value: 1000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AppServer
+      - Java
+      - ServiceToken
+      - Unpatched
+    is_goal: false
+
+  GrafanaServer:
+    port: Prometheus
+    value: 600
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AppServer
+      - GoRuntime
+      - Unpatched
+    is_goal: false
+
+  VaultServer:
+    port: VaultAPI
+    value: 3000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AppServer
+      - GoRuntime
+      - ServiceToken
+      - AdminCredentials
+      - Unpatched
+    is_goal: false
+
+  # ── Data Tier ──────────────────────────────────────────────────────────────
+  MySQLServer:
+    port: MySQL
+    value: 1000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - DatabaseServer
+      - MySQL
+      - SensitiveData
+      - Patched
+    is_goal: false
+
+  MongoDBServer:
+    port: MongoDB
+    value: 5000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - DatabaseServer
+      - MongoDB
+      - GoRuntime
+      - SensitiveData
+      - CustomerData
+      - Misconfigured
+      - Unpatched
+    is_goal: false
+
+  RedisServer:
+    port: Redis
+    value: 2000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Alpine
+      - DatabaseServer
+      - Redis
+      - GoRuntime
+      - LibCrypto
+      - SensitiveData
+      - Misconfigured
+      - Patched
+    is_goal: false
+
+  # ── Auth Tier (Goal) ───────────────────────────────────────────────────────
+  KeycloakServer:
+    port: KeycloakHTTPS
+    value: 12000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - AuthServer
+      - Java
+      - KeycloakService
+      - AdminCredentials
+      - IdentityData
+      - Unpatched
+    is_goal: true
+
+  # ── Worker Tier ────────────────────────────────────────────────────────────
+  AirflowServer:
+    port: AirflowHTTP
+    value: 800
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - WorkerNode
+      - Python
+      - Misconfigured
+      - Unpatched
+    is_goal: false
+
+  KafkaServer:
+    port: Kafka
+    value: 8000
+    allowed_os:
+      - Linux
+    default_properties:
+      - Linux
+      - Debian
+      - WorkerNode
+      - MessageBroker
+      - Java
+      - SensitiveData
+      - Unpatched
+    is_goal: true
+
+domains:
+  - name: WebTier
+    subnet: 10.0.1.0/24
+    filler:
+      - NginxProxy
+    mandatory_services:
+      - NginxProxy
+      - WordPressServer
+    groups:
+      - name: NginxProxies
+        service: NginxProxy
+        min_count: 2
+        max_count: 5
+      - name: WordPressServers
+        service: WordPressServer
+        min_count: 1
+        max_count: 4
+    constraints:
+      - source: NginxProxies
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: WordPressServers
+        target: Unpatched
+        relation: MUST_HAVE
+
+  - name: AppTier
+    subnet: 10.0.2.0/24
+    filler:
+      - GrafanaServer
+    mandatory_services:
+      - JenkinsServer
+      - VaultServer
+      - GrafanaServer
+    groups:
+      - name: JenkinsServers
+        service: JenkinsServer
+        min_count: 1
+        max_count: 3
+      - name: VaultServers
+        service: VaultServer
+        min_count: 1
+        max_count: 2
+      - name: GrafanaServers
+        service: GrafanaServer
+        min_count: 1
+        max_count: 3
+    constraints:
+      - source: JenkinsServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: VaultServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: GrafanaServers
+        target: Unpatched
+        relation: MUST_HAVE
+      # Jenkins holds Vault tokens — primary credential pivot
+      - source: JenkinsServers
+        target: VaultServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: VaultAPI
+      - source: JenkinsServers
+        target: VaultServers
+        relation: MUST_CONNECT
+        protocol: VaultAPI
+      # Grafana connects to Vault for data source cred management
+      - source: GrafanaServers
+        target: VaultServers
+        relation: MUST_REACH
+        protocol: VaultAPI
+
+  - name: DataTier
+    subnet: 10.0.3.0/24
+    filler:
+      - RedisServer
+    mandatory_services:
+      - MySQLServer
+      - MongoDBServer
+      - RedisServer
+    groups:
+      - name: MySQLServers
+        service: MySQLServer
+        min_count: 1
+        max_count: 3
+      - name: MongoDBServers
+        service: MongoDBServer
+        min_count: 1
+        max_count: 3
+      - name: RedisServers
+        service: RedisServer
+        min_count: 1
+        max_count: 2
+    constraints:
+      - source: MongoDBServers
+        target: Unpatched
+        relation: MUST_HAVE
+      # Vault issues credentials to data stores
+      - source: MongoDBServers
+        target: Misconfigured
+        relation: MUST_HAVE
+
+  - name: AuthTier
+    subnet: 10.0.4.0/24
+    filler: []
+    mandatory_services:
+      - KeycloakServer
+    groups:
+      - name: KeycloakServers
+        service: KeycloakServer
+        min_count: 1
+        max_count: 2
+    constraints:
+      - source: KeycloakServers
+        target: Unpatched
+        relation: MUST_HAVE
+
+  - name: WorkerTier
+    subnet: 10.0.5.0/24
+    filler:
+      - AirflowServer
+    mandatory_services:
+      - AirflowServer
+      - KafkaServer
+    groups:
+      - name: AirflowServers
+        service: AirflowServer
+        min_count: 1
+        max_count: 3
+      - name: KafkaServers
+        service: KafkaServer
+        min_count: 1
+        max_count: 3
+    constraints:
+      - source: AirflowServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: KafkaServers
+        target: Unpatched
+        relation: MUST_HAVE
+      - source: AirflowServers
+        target: Misconfigured
+        relation: MUST_HAVE
+      # Airflow holds Kafka SASL creds in connection store
+      - source: AirflowServers
+        target: KafkaServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: Kafka
+      - source: AirflowServers
+        target: KafkaServers
+        relation: MUST_CONNECT
+        protocol: Kafka
+
+inter_domain_constraints:
+  # WebTier → AppTier (HTTPS/REST only — no DB ports)
+  - source_domain: WebTier
+    target_domain: AppTier
+    constraints:
+      - source: NginxProxies
+        target: JenkinsServers
+        relation: MUST_CONNECT
+        protocol: JenkinsHTTPS
+      - source: NginxProxies
+        target: JenkinsServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: JenkinsHTTPS
+      - source: WordPressServers
+        target: VaultServers
+        relation: MUST_REACH
+        protocol: VaultAPI
+      - source: WordPressServers
+        target: VaultServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: VaultAPI
+
+  # WebTier → DataTier (WordPress reads MySQL directly — wp-config.php)
+  - source_domain: WebTier
+    target_domain: DataTier
+    constraints:
+      - source: WordPressServers
+        target: MySQLServers
+        relation: MUST_CONNECT
+        protocol: MySQL
+      - source: WordPressServers
+        target: MySQLServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MySQL
+
+  # AppTier → DataTier (port-specific only)
+  - source_domain: AppTier
+    target_domain: DataTier
+    constraints:
+      - source: VaultServers
+        target: MySQLServers
+        relation: CLIENT_OF
+        protocol: MySQL
+      - source: VaultServers
+        target: MySQLServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MySQL
+      - source: VaultServers
+        target: MongoDBServers
+        relation: CLIENT_OF
+        protocol: MongoDB
+      - source: VaultServers
+        target: MongoDBServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MongoDB
+      - source: GrafanaServers
+        target: MySQLServers
+        relation: MUST_REACH
+        protocol: MySQL
+      - source: GrafanaServers
+        target: MongoDBServers
+        relation: MUST_REACH
+        protocol: MongoDB
+      - source: GrafanaServers
+        target: RedisServers
+        relation: MUST_REACH
+        protocol: Redis
+
+  # AppTier → AuthTier (HTTPS only — no WebTier direct access)
+  - source_domain: AppTier
+    target_domain: AuthTier
+    constraints:
+      - source: JenkinsServers
+        target: KeycloakServers
+        relation: MUST_REACH
+        protocol: KeycloakHTTPS
+      - source: VaultServers
+        target: KeycloakServers
+        relation: MUST_CONNECT
+        protocol: KeycloakHTTPS
+      - source: VaultServers
+        target: KeycloakServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: KeycloakHTTPS
+
+  # AppTier → WorkerTier (Kafka producer access)
+  - source_domain: AppTier
+    target_domain: WorkerTier
+    constraints:
+      - source: JenkinsServers
+        target: KafkaServers
+        relation: MUST_REACH
+        protocol: Kafka
+
+  # DataTier → AuthTier (MySQL creds can be pivoted to Keycloak admin)
+  - source_domain: DataTier
+    target_domain: AuthTier
+    constraints:
+      - source: MySQLServers
+        target: KeycloakServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: KeycloakHTTPS
+
+  # WorkerTier → DataTier (Kafka → MongoDB event stream)
+  - source_domain: WorkerTier
+    target_domain: DataTier
+    constraints:
+      - source: KafkaServers
+        target: MongoDBServers
+        relation: MUST_REACH
+        protocol: MongoDB
+
+  # WorkerTier → AuthTier (Kafka event stream includes Keycloak events)
+  - source_domain: WorkerTier
+    target_domain: AuthTier
+    constraints:
+      - source: KafkaServers
+        target: KeycloakServers
+        relation: MUST_REACH
+        protocol: KeycloakHTTPS
+
+entry_points:
+  - domain: WebTier
+    node: NginxProxies
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.55
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

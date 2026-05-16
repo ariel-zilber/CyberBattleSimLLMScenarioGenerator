@@ -1,0 +1,465 @@
+metadata:
+  scenario_id: S-WIN-01
+  agent: S_Windows
+  training_mode: standalone
+  zones: [Z1_HQVLANs, Z1_ServerFarm]
+  terminal_goal: DomainController
+  intermediate_goals:
+    - name: FileServer
+      value: 3500
+      reason: SMB pivot point — credential extraction before Server Farm
+    - name: MSSQLServer
+      value: 6500
+      reason: near-goal tier — requires Server Farm access
+  node_range: [30, 100]
+  attack_path:
+    - "Probe — Remote.Probe.Windows fingerprints workstation OS version"
+    - "VLAN entry — EternalBlue (CVE-2017-0144) on NoLAPS Win7 workstation via SMB"
+    - "Local escalation — SeImpersonatePrivEsc or AlwaysInstallElevated on owned workstation"
+    - "Server Farm entry — SMBGhost (CVE-2020-0796) or EternalBlue on FileServer via SMB"
+    - "Credential extraction — Mimikatz_NTLM / Kerberoasting on Kerberoastable AppServer"
+    - "Goal — SIGRed (CVE-2020-1350) or RPC_RCE_2 (CVE-2022-26809) on DomainController (TERMINAL)"
+  notes: |
+    NoLAPS workstations are explicitly tagged so EternalBlue only applies to them.
+    LAPS workstations resist credential reuse — no lateral movement shortcut.
+    AppServers run a Kerberoastable SQL service account (Kerberoastable property).
+    DomainController is isolated — unreachable directly from workstations;
+    attacker must pivot through AppServers first.
+    All success_rate values are CVE-derived from vulnerability_catalog.md.
+
+config:
+  min_total_nodes: 30
+  max_total_nodes: 100
+  goal_config:
+    num_goals: 2
+    selection_strategy: diverse
+
+identifiers:
+  standard_ports:
+    - RDP
+    - SMB
+    - LDAP
+    - LDAPS
+    - Kerberos
+    - HTTPS
+    - HTTP
+    - SSH
+    - MSSQL
+    - WinRM
+  standard_ports_extra:
+    - DNS
+    - NTP
+    - ICMP
+  base_properties:
+    # Attacker marker
+    - breach_node
+    # Operating Systems
+    - Windows
+    - Linux
+    - Win7
+    - Win10
+    - Win2019
+    - Win2022
+    # Node Types / Roles
+    - Workstation
+    - FileServer
+    - AppServer
+    - DomainController
+    - LegacyWorkstation
+    - ModernWorkstation
+    - SQLService
+    # Security Posture
+    - LAPS
+    - NoLAPS
+    - Unpatched
+    - Patched
+    - Kerberoastable
+    - DomainJoined
+    - DomainAdmin
+    - SMBv1
+    # Data Classification
+    - SensitiveData
+    - AdminCredentials
+
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: RDP
+
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.10
+  properties:
+    - breach_node
+  default_entry_port: RDP
+  preferred_entry_ports:
+    - RDP
+    - SMB
+  entry_node_count: 1
+  leaked_node_coverage: 0.15
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: External.ActiveDirectory.Recon
+      type: LOCAL
+      description: "OSINT and port scanning to identify publicly exposed RDP/SMB endpoints and enumerate AD-joined hostnames via DNS."
+      cost: 0.5
+      success_rate: 0.90
+      reward: "Identified externally reachable RDP endpoints in the target enterprise"
+    credential_leak:
+      name: External.Phishing.CredentialHarvest
+      type: LOCAL
+      description: "Spear-phishing campaign targeting employees. Harvests one set of valid domain credentials via a fake Office 365 login portal."
+      cost: 1.5
+      success_rate: 0.55
+      reward: "Domain user credentials obtained via phishing — initial foothold established"
+
+attack_flow:
+  - source_pattern: LegacyWorkstation
+    targets:
+      - LegacyWorkstation
+      - ModernWorkstation
+      - FileServer
+  - source_pattern: ModernWorkstation
+    targets:
+      - FileServer
+      - AppServer
+  - source_pattern: FileServer
+    targets:
+      - AppServer
+      - DomainController
+  - source_pattern: AppServer
+    targets:
+      - DomainController
+
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Local.AD.CachedCredentialDump
+    type: LOCAL
+    description: "Extracts NTLM hashes and plaintext credentials from LSASS memory on a compromised Windows host using Mimikatz-style tooling."
+    cost: 1.0
+    success_rate: 0.70
+    reward: "Cached domain credentials extracted — access to {target} now possible"
+    node_probability: 0.50
+    target_coverage: 0.35
+    min_targets: 1
+    default_port: SMB
+  leak_neighbors:
+    name: Local.AD.NetworkEnumeration
+    type: LOCAL
+    description: "Enumerates Active Directory for neighboring hosts, shares, and service accounts via LDAP queries and net commands."
+    cost: 0.5
+    success_rate: 0.85
+    reward: "Active Directory enumeration revealed neighbor node {target}"
+    node_probability: 0.60
+    target_coverage: 0.40
+    min_targets: 1
+
+probe_vulnerabilities:
+  - name: Remote.Probe.Windows
+    os: Windows
+    type: REMOTE
+    description: "Identifies Windows OS version and patch level via SMB banner grabbing and RDP negotiation."
+    cost: 0.5
+    success_rate: 0.95
+  - name: Remote.Probe.Linux
+    os: Linux
+    type: REMOTE
+    description: "Identifies Linux OS via SSH banner and HTTP server headers."
+    cost: 0.5
+    success_rate: 0.95
+
+solvability_vulnerabilities:
+  remote_access:
+    - name: Solvability.EternalBlue
+      type: REMOTE
+      description: "CVE-2017-0144 MS17-010 SMBv1 remote code execution against unpatched Windows 7 workstations. CVSS 8.8."
+      cost: 1.5
+      success_rate: 0.88
+      reward: "Remote code execution achieved on legacy Windows 7 workstation via EternalBlue (CVE-2017-0144)"
+      match_properties:
+        - Windows
+        - Win7
+        - SMBv1
+        - Unpatched
+      probability: 0.65
+
+    - name: Solvability.BlueKeep
+      type: REMOTE
+      description: "CVE-2019-0708 BlueKeep unauthenticated RCE via RDP on unpatched Windows 7. CVSS 9.8."
+      cost: 1.0
+      success_rate: 0.90
+      reward: "BlueKeep (CVE-2019-0708) RCE achieved via RDP — unauthenticated shell on legacy workstation"
+      match_properties:
+        - Windows
+        - Win7
+        - NoLAPS
+        - Unpatched
+      probability: 0.65
+
+  credential_leak:
+    - name: Solvability.Mimikatz_LegacyWorkstation
+      type: LOCAL
+      description: "Dumps plaintext credentials and NTLM hashes from LSASS on legacy workstations where WDigest is still enabled. AD technique — no direct CVE."
+      cost: 1.0
+      success_rate: 0.68
+      reward: "WDigest plaintext credentials dumped from legacy Windows 7 LSASS — reusable across domain"
+      match_properties:
+        - Windows
+        - Win7
+        - NoLAPS
+        - DomainJoined
+      probability: 0.65
+      target_coverage: 0.40
+      min_targets: 1
+
+    - name: Solvability.Kerberoast_AppServer
+      type: LOCAL
+      description: "Requests Kerberos service tickets for Kerberoastable service accounts on AppServers, then cracks them offline."
+      cost: 1.5
+      success_rate: 0.60
+      reward: "Kerberoastable service account TGS ticket cracked — service account credentials recovered"
+      match_properties:
+        - Windows
+        - AppServer
+        - Kerberoastable
+        - DomainJoined
+      probability: 0.60
+      target_coverage: 0.30
+      min_targets: 1
+
+  discovery:
+    - name: Solvability.BloodHound_ADRecon
+      type: LOCAL
+      description: "Runs BloodHound/SharpHound to enumerate all AD objects, ACL relationships, and attack paths to Domain Admin."
+      cost: 1.0
+      success_rate: 0.80
+      reward: "Full Active Directory attack path graph constructed via BloodHound enumeration"
+      match_properties:
+        - Windows
+        - DomainJoined
+      probability: 0.70
+      target_coverage: 0.50
+      min_targets: 2
+
+    - name: Solvability.SMB_ShareEnumeration
+      type: LOCAL
+      description: "Enumerates accessible SMB shares on FileServers to locate credentials, configs, and scripts."
+      cost: 0.5
+      success_rate: 0.75
+      reward: "SMB share enumeration revealed accessible file shares and potential credential files on {target}"
+      match_properties:
+        - Windows
+        - FileServer
+        - SMBv1
+      probability: 0.65
+      target_coverage: 0.35
+      min_targets: 1
+
+  goal_access:
+    - name: Solvability.DCSync_DomainController
+      type: LOCAL
+      description: "Abuses DS-Replication-Get-Changes-All privilege to perform a DCSync attack, extracting all domain password hashes including krbtgt."
+      cost: 2.5
+      success_rate: 0.55
+      reward: "DCSync attack successful — all domain NTLM hashes including krbtgt extracted. Full domain compromise achieved."
+      match_properties:
+        - Windows
+        - DomainController
+        - Win2019
+        - DomainAdmin
+      probability: 0.60
+      goal_category: dump
+
+    - name: Solvability.GoldenTicket_DomainController
+      type: LOCAL
+      description: "Creates a forged Kerberos TGT (Golden Ticket) using the extracted krbtgt hash for persistent domain-wide access."
+      cost: 2.0
+      success_rate: 0.50
+      reward: "Golden Ticket forged using krbtgt hash — persistent, unrevocable domain-wide admin access established"
+      match_properties:
+        - Windows
+        - DomainController
+        - AdminCredentials
+      probability: 0.50
+      goal_category: privesc
+
+services:
+  LegacyWorkstation:
+    port: RDP
+    value: 100
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win7
+      - LegacyWorkstation
+      - Workstation
+      - NoLAPS
+      - Unpatched
+      - SMBv1
+      - DomainJoined
+    is_goal: false
+
+  ModernWorkstation:
+    port: RDP
+    value: 200
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win10
+      - ModernWorkstation
+      - Workstation
+      - LAPS
+      - Patched
+      - DomainJoined
+    is_goal: false
+
+  FileServer:
+    port: SMB
+    value: 800
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - FileServer
+      - SMBv1
+      - SensitiveData
+      - DomainJoined
+    is_goal: false
+
+  AppServer:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2019
+      - AppServer
+      - Kerberoastable
+      - SQLService
+      - DomainJoined
+    is_goal: false
+
+  DomainController:
+    port: LDAP
+    value: 10000
+    allowed_os:
+      - Windows
+    default_properties:
+      - Windows
+      - Win2022
+      - DomainController
+      - DomainAdmin
+      - AdminCredentials
+      - DomainJoined
+    is_goal: true
+
+domains:
+  - name: EnterpriseAD
+    subnet: 10.0.1.0/24
+    filler:
+      - LegacyWorkstation
+      - ModernWorkstation
+    mandatory_services:
+      - LegacyWorkstation
+      - ModernWorkstation
+      - FileServer
+      - AppServer
+      - DomainController
+    groups:
+      - name: LegacyWorkstations
+        service: LegacyWorkstation
+        min_count: 5
+        max_count: 20
+      - name: ModernWorkstations
+        service: ModernWorkstation
+        min_count: 3
+        max_count: 15
+      - name: FileServers
+        service: FileServer
+        min_count: 1
+        max_count: 3
+      - name: AppServers
+        service: AppServer
+        min_count: 1
+        max_count: 4
+      - name: DomainControllers
+        service: DomainController
+        min_count: 1
+        max_count: 2
+    constraints:
+      # Legacy workstations must have SMBv1 enabled (enforced property)
+      - source: LegacyWorkstations
+        target: SMBv1
+        relation: MUST_HAVE
+      # Legacy workstations must be unpatched
+      - source: LegacyWorkstations
+        target: Unpatched
+        relation: MUST_HAVE
+      # Modern workstations must not be unpatched
+      - source: ModernWorkstations
+        target: Unpatched
+        relation: MUST_NOT_HAVE
+      # Workstations can reach file servers over SMB
+      - source: LegacyWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      - source: ModernWorkstations
+        target: FileServers
+        relation: MUST_CONNECT
+        protocol: SMB
+      # App servers can reach domain controllers over Kerberos/LDAP
+      - source: AppServers
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: LDAP
+      # Workstations authenticate to domain controllers
+      - source: LegacyWorkstations
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: Kerberos
+      - source: ModernWorkstations
+        target: DomainControllers
+        relation: MUST_CONNECT
+        protocol: Kerberos
+      # Legacy workstations leak cached credentials to file and app servers
+      - source: LegacyWorkstations
+        target: FileServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: SMB
+      - source: LegacyWorkstations
+        target: AppServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: WinRM
+      # File servers can leak service account credentials to app servers
+      - source: FileServers
+        target: AppServers
+        relation: LEAK_KNOWN_CREDENTIALS
+        protocol: MSSQL
+      # App servers are clients of domain controllers (privileged access path)
+      - source: AppServers
+        target: DomainControllers
+        relation: CLIENT_OF
+        protocol: LDAPS
+
+entry_points:
+  - domain: EnterpriseAD
+    node: LegacyWorkstations
+
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.55
+  auto_fix_enabled: true
+  auto_fix_strategies:
+    - add_remote_vulnerability_to_entry
+    - add_credential_leakage
+    - add_lateral_movement_vulnerabilities

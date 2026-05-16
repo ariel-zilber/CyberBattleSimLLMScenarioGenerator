@@ -1,0 +1,1202 @@
+"""
+tools/add_missing_tactic_cves.py
+=================================
+Extends windows_cves.json and scada_cves.json with 5 entries per missing tactic.
+
+Missing in windows_cves: TA0003 Persistence, TA0005 Defense Evasion, TA0010 Exfiltration
+Missing in scada_cves:   TA0003 Persistence, TA0005 Defense Evasion,
+                         TA0006 Credential Access, TA0009 Collection, TA0010 Exfiltration
+"""
+from __future__ import annotations
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+WIN_DB  = ROOT / "data" / "vulnerability_db" / "windows_cves.json"
+SCADA_DB = ROOT / "data" / "vulnerability_db" / "scada_cves.json"
+
+
+# ── New Windows CVE entries ───────────────────────────────────────────────────
+
+WINDOWS_NEW: list[dict] = [
+    # ── TA0003 Persistence ────────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2022-26904",
+        "label": "UserProfileSvc_Persist",
+        "category": "persistence",
+        "description": "Windows User Profile Service elevation of privilege vulnerability allowing creation of a malicious Windows service that persists across reboots (T1543.003).",
+        "severity": "HIGH",
+        "cvss_score": 7.0,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "HIGH",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-04-12",
+        "cbs_properties": ["Windows", "DomainJoined", "Workstation"],
+        "success_rate": 0.60,
+        "exploit_cost": 1.5,
+        "cbs_type": "LOCAL",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-26904",
+            "https://github.com/rapid7/metasploit-framework/pull/16544"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1543.003"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation", "techniques": ["T1543.003"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2021-41379",
+        "label": "WinInstaller_AlwaysInstallElevated",
+        "category": "persistence",
+        "description": "Windows Installer elevation of privilege via AlwaysInstallElevated registry policy allows low-privileged user to install MSI packages as SYSTEM and plant a persisted service or scheduled task.",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2021-11-09",
+        "cbs_properties": ["Windows", "Workstation", "DomainJoined"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2021-41379",
+            "https://github.com/gentilkiwi/mimikatz/wiki"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1547.001", "T1053.005"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation", "techniques": ["T1547.001"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2023-21768",
+        "label": "WinSock_AFD_Persist",
+        "category": "persistence",
+        "description": "Windows Ancillary Function Driver for WinSock elevation of privilege allowing SYSTEM-level code execution used to write a persistence payload to HKLM registry run keys.",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2023-01-10",
+        "cbs_properties": ["Windows", "DomainJoined", "Workstation"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-21768",
+            "https://github.com/chompie1337/Windows_LPE_AFD_CVE-2023-21768"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1547.001"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation", "techniques": ["T1543.003"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2022-21882",
+        "label": "Win32k_ServicePersist",
+        "category": "persistence",
+        "description": "Win32k elevation of privilege allows attacker to create a SYSTEM-level process that registers a Windows service with automatic startup (T1543.003) for persistent access.",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-01-11",
+        "cbs_properties": ["Windows", "DomainJoined"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-21882",
+            "https://github.com/KaLendsi/CVE-2022-21882"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1543.003"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation", "techniques": ["T1543.003"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2023-36025",
+        "label": "SmartScreen_TaskPersist",
+        "category": "persistence",
+        "description": "Windows SmartScreen security bypass allows an attacker to craft a shortcut file that evades Mark-of-the-Web checks, enabling silent deployment of a scheduled task for persistence (T1053.005).",
+        "severity": "HIGH",
+        "cvss_score": 8.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "REQUIRED",
+        "published": "2023-11-14",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.72,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-36025",
+            "https://www.microsoft.com/en-us/security/blog/2023/11/15/hunting-for-cve-2023-36025"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1053.005"]},
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion",     "techniques": ["T1553.005"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    # ── TA0005 Defense Evasion ────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2022-44698",
+        "label": "SmartScreen_MotWBypass",
+        "category": "defense_evasion",
+        "description": "Windows SmartScreen Mark-of-the-Web bypass allows attacker-crafted files to skip Windows Defender reputation checks (T1553.005), enabling execution of malicious payloads without UAC prompt.",
+        "severity": "MEDIUM",
+        "cvss_score": 5.4,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "REQUIRED",
+        "published": "2022-12-13",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.60,
+        "exploit_cost": 2.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-44698",
+            "https://github.com/ZeroMemoryEx/CVE-2022-44698"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1553.005"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1566.002"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2024-21412",
+        "label": "InternetShortcut_DefEvade",
+        "category": "defense_evasion",
+        "description": "Windows Internet Shortcut Files security feature bypass allows specially crafted .url files to bypass Windows Defender SmartScreen and Defender for Endpoint detection (T1553.005, T1562.001).",
+        "severity": "HIGH",
+        "cvss_score": 8.1,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "HIGH",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2024-02-13",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2024-21412",
+            "https://www.trendmicro.com/en_us/research/24/b/cve-2024-21412--water-hydra-targets-traders-with-microsoft-defen.html"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1553.005", "T1562.001"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1566.002"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2023-36874",
+        "label": "WER_UAC_Bypass",
+        "category": "defense_evasion",
+        "description": "Windows Error Reporting service elevation of privilege allows UAC bypass — attacker abuses WER to execute code in a higher integrity level without triggering UAC prompt (T1548.002).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2023-07-11",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-36874",
+            "https://github.com/Wh04m1001/CVE-2023-36874"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion",     "techniques": ["T1548.002"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation", "techniques": ["T1548.002"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2022-30190",
+        "label": "Follina_MSDT_Evade",
+        "category": "defense_evasion",
+        "description": "Microsoft Support Diagnostic Tool (MSDT) remote code execution via ms-msdt URI. Executes payload without triggering standard AV/EDR detection paths because MSDT is a signed Windows binary (T1218.011 Living-off-the-Land).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "REQUIRED",
+        "published": "2022-06-01",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.72,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-30190",
+            "https://github.com/chvancooten/follina.py"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1218.011", "T1027"]},
+            {"tactic_id": "TA0002", "tactic_name": "Execution",        "techniques": ["T1059.001"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2023-21715",
+        "label": "Publisher_MacroBypass",
+        "category": "defense_evasion",
+        "description": "Microsoft Publisher security features bypass allows attacker to run macro-enabled documents that bypass Office Protected View and MOTW, defeating standard enterprise macro-blocking policies (T1566.001, T1202).",
+        "severity": "HIGH",
+        "cvss_score": 7.3,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "REQUIRED",
+        "published": "2023-02-14",
+        "cbs_properties": ["Windows", "Workstation", "Unpatched"],
+        "success_rate": 0.60,
+        "exploit_cost": 2.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-21715"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1202", "T1553.005"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1566.001"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    # ── TA0010 Exfiltration ───────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2019-1225",
+        "label": "RDP_InfoDisc_Exfil",
+        "category": "exfiltration",
+        "description": "Windows Remote Desktop Protocol information disclosure allows an unauthenticated attacker to obtain session tokens and screen data from active RDP sessions — enabling credential and data exfiltration over the existing RDP channel (T1048.003).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2019-08-14",
+        "cbs_properties": ["Windows", "RDP", "DomainJoined"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2019-1225"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration",   "techniques": ["T1048.003"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",      "techniques": ["T1113"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2022-32230",
+        "label": "SMB_InfDisc_Exfil",
+        "category": "exfiltration",
+        "description": "Windows SMB information disclosure allows remote attacker to read arbitrary file contents from SMB shares via crafted request, leaking sensitive documents over the network (T1039, T1048.002).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2022-06-14",
+        "cbs_properties": ["Windows", "SMBv1", "FileServer"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.65,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-32230"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1048.002", "T1039"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1039"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2023-21527",
+        "label": "iSCSI_DataExfil",
+        "category": "exfiltration",
+        "description": "Windows iSCSI Discovery Service information disclosure allows remote unauthenticated attacker to read storage target names and configuration — enabling mapping and bulk exfiltration of network-attached storage volumes (T1530).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2023-01-10",
+        "cbs_properties": ["Windows", "FileServer", "DatabaseServer"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2023-21527"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1530"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1119"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2024-28995",
+        "label": "SolarWinds_FTP_Exfil",
+        "category": "exfiltration",
+        "description": "SolarWinds Serv-U path traversal allows unauthenticated remote attacker to read arbitrary files outside the FTP root — including configuration files with credentials and database dumps (T1005, T1048).",
+        "severity": "HIGH",
+        "cvss_score": 8.6,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2024-06-05",
+        "cbs_properties": ["Windows", "FileServer", "WebServer"],
+        "success_rate": 0.72,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cve.org/CVERecord?id=CVE-2024-28995",
+            "https://github.com/bigb0x/CVE-2024-28995"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1005", "T1048"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1005"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2022-24472",
+        "label": "SharePoint_DataExfil",
+        "category": "exfiltration",
+        "description": "Microsoft SharePoint Server information disclosure allows low-privileged authenticated users to read arbitrary SharePoint list items and files from sites they should not have access to (T1213.002).",
+        "severity": "MEDIUM",
+        "cvss_score": 6.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-03-09",
+        "cbs_properties": ["Windows", "WebServer", "FileServer", "DomainJoined"],
+        "success_rate": 0.55,
+        "exploit_cost": 2.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://msrc.microsoft.com/update-guide/vulnerability/CVE-2022-24472"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1213.002"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1213.002"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+]
+
+
+# ── New SCADA CVE entries ─────────────────────────────────────────────────────
+
+SCADA_NEW: list[dict] = [
+    # ── TA0003 Persistence ────────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2018-14798",
+        "label": "InduSoft_Persist",
+        "category": "indusoft",
+        "description": "Schneider Electric InduSoft Web Studio and InTouch Machine Edition allow an unauthenticated attacker to write files to the project directory, enabling persistent backdoor installation in the HMI project (T1505 Server Software Component).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2018-09-14",
+        "in_kev": False,
+        "epss_score": 0.012,
+        "cbs_properties": ["SCADA", "HMI", "Schneider", "ICS"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-18-257-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2018-14798"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",     "techniques": ["T1505"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1190"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2019-9201",
+        "label": "PhoenixContact_BackdoorAccount",
+        "category": "phoenix_contact",
+        "description": "Phoenix Contact PLCNext devices contain hardcoded service accounts that persist across firmware updates, providing attacker persistent privileged shell access after initial compromise (T1136.001).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2019-02-25",
+        "in_kev": False,
+        "epss_score": 0.025,
+        "cbs_properties": ["SCADA", "PLC", "ICS", "Modbus"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-19-057-02",
+            "https://nvd.nist.gov/vuln/detail/CVE-2019-9201"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",     "techniques": ["T1136.001", "T1098"]},
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access","techniques": ["T1552.001"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2021-38423",
+        "label": "Ovarro_TBox_Persist",
+        "category": "ovarro",
+        "description": "Ovarro TBox RTUs allow unauthenticated upload of arbitrary firmware/script files via the web interface, enabling an attacker to plant a persistent backdoor script that survives device resets (T1542.001 Pre-OS Boot).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2021-08-30",
+        "in_kev": False,
+        "epss_score": 0.008,
+        "cbs_properties": ["SCADA", "RTU", "ICS", "Modbus"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-21-042-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-38423"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",     "techniques": ["T1542.001", "T1505"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1190"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2019-13945",
+        "label": "Siemens_S7_SSH_Persist",
+        "category": "siemens_s7",
+        "description": "Siemens SIMATIC S7-1500 and S7-1200 contain a hardcoded private SSH key used by the onboard webserver, allowing any attacker with physical or network access to authenticate as root and establish a persistent SSH backdoor (T1098).",
+        "severity": "HIGH",
+        "cvss_score": 7.6,
+        "attack_vector": "PHYSICAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2019-08-13",
+        "in_kev": False,
+        "epss_score": 0.003,
+        "cbs_properties": ["SCADA", "PLC", "Siemens", "S7Modern", "ICS"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.35,
+        "references": [
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-728618.pdf",
+            "https://nvd.nist.gov/vuln/detail/CVE-2019-13945"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",     "techniques": ["T1098"]},
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access","techniques": ["T1552.004"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    {
+        "cve_id": "CVE-2022-0978",
+        "label": "AVEVA_SysPlat_Persist",
+        "category": "aveva",
+        "description": "AVEVA System Platform 2020 R2 P01 and prior allow low-privileged authenticated users to write to SYSTEM-owned directories, enabling planting of a malicious DLL that loads on every historian service restart (T1574.002 DLL Search Order Hijacking).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-03-15",
+        "in_kev": False,
+        "epss_score": 0.004,
+        "cbs_properties": ["SCADA", "Historian", "AVEVA", "ICS"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-22-076-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-0978"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",     "techniques": ["T1574.002"]},
+            {"tactic_id": "TA0004", "tactic_name": "Privilege Escalation","techniques": ["T1574.002"]},
+        ],
+        "mitre_primary": "TA0003",
+    },
+    # ── TA0005 Defense Evasion ────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2021-27507",
+        "label": "ABB_DriveComposer_Evade",
+        "category": "abb",
+        "description": "ABB Drive Composer pro 2.0.0.180 and prior allow DLL side-loading via unsigned DLLs in the installation path, enabling an attacker to bypass application whitelisting and execute arbitrary code within the trusted ABB process context (T1574.002).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "REQUIRED",
+        "published": "2021-04-29",
+        "in_kev": False,
+        "epss_score": 0.002,
+        "cbs_properties": ["SCADA", "ICS", "HMI"],
+        "success_rate": 0.60,
+        "exploit_cost": 2.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.35,
+        "references": [
+            "https://search.abb.com/library/Download.aspx?DocumentID=2PAA120769&LanguageCode=en&DocumentPartId=&Action=Launch",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-27507"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion",    "techniques": ["T1574.002", "T1036.005"]},
+            {"tactic_id": "TA0003", "tactic_name": "Persistence",         "techniques": ["T1574.002"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2019-13532",
+        "label": "CODESYS_SecBypass",
+        "category": "codesys",
+        "description": "CODESYS Runtime Toolkit before 3.5.15.20 ignores the 'allow online change' access right flag, allowing attacker-uploaded programs to execute without the expected authorization check — effectively bypassing the ICS security zone model (T1562.003).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2019-10-25",
+        "in_kev": False,
+        "epss_score": 0.007,
+        "cbs_properties": ["SCADA", "PLC", "ICS", "S7CommPlus"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-19-290-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2019-13532"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1562.003"]},
+            {"tactic_id": "TA0002", "tactic_name": "Execution",        "techniques": ["T1059"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2022-0923",
+        "label": "Delta_InfraSuite_SecBypass",
+        "category": "delta_electronics",
+        "description": "Delta Electronics InfraSuite Device Master before 1.0.5 allows unauthenticated path traversal that bypasses role-based access control, enabling an attacker to read config files marked as administrator-only without triggering audit logs (T1562.006 Indicator Blocking).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2022-03-30",
+        "in_kev": True,
+        "epss_score": 0.028,
+        "cbs_properties": ["SCADA", "HMI", "ICS"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-22-081-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-0923"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1562.006", "T1036"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",   "techniques": ["T1190"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2021-34552",
+        "label": "Pilz_PMC_LogBypass",
+        "category": "pilz",
+        "description": "Pilz PMC programming tool 3.x sends diagnostic data over an unencrypted channel and does not verify certificate chains, allowing MitM attacker to silently drop safety alarms without triggering operator alerts (T1565.002 Transmitted Data Manipulation).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2021-07-15",
+        "in_kev": False,
+        "epss_score": 0.012,
+        "cbs_properties": ["SCADA", "PLC", "ICS", "Modbus"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-34552"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1565.002", "T1562"]},
+            {"tactic_id": "TA0040", "tactic_name": "Impact",           "techniques": ["T1565.002"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    {
+        "cve_id": "CVE-2018-10952",
+        "label": "Modbus_LogSuppression",
+        "category": "modbus",
+        "description": "Moxa EDS-405A Series and other Modbus-enabled switches allow unauthenticated cleartext Modbus commands to suppress diagnostic counters, enabling an attacker to reset error statistics and eliminate forensic evidence of previous Modbus coil-write attacks (T1070 Indicator Removal).",
+        "severity": "HIGH",
+        "cvss_score": 8.1,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2018-05-08",
+        "in_kev": False,
+        "epss_score": 0.005,
+        "cbs_properties": ["SCADA", "Modbus", "ModbusTCP", "ICS"],
+        "success_rate": 0.75,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-18-128-03",
+            "https://nvd.nist.gov/vuln/detail/CVE-2018-10952"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0005", "tactic_name": "Defense Evasion", "techniques": ["T1070"]},
+            {"tactic_id": "TA0040", "tactic_name": "Impact",           "techniques": ["T1565.001"]},
+        ],
+        "mitre_primary": "TA0005",
+    },
+    # ── TA0006 Credential Access ──────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2020-25178",
+        "label": "AVEVA_SysPlatform_CredDump",
+        "category": "aveva",
+        "description": "AVEVA System Platform 2020 and prior store Galaxy database credentials in an insufficiently protected XML configuration file readable by low-privileged OS users, exposing MSSQL SA credentials for all historian data (T1552.001).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2020-09-14",
+        "in_kev": False,
+        "epss_score": 0.004,
+        "cbs_properties": ["SCADA", "Historian", "AVEVA", "ICS"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "LOCAL",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-20-259-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2020-25178"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.001"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",         "techniques": ["T1005"]},
+        ],
+        "mitre_primary": "TA0006",
+    },
+    {
+        "cve_id": "CVE-2023-29465",
+        "label": "WellinTech_CredDisc",
+        "category": "wellintech",
+        "description": "WellinTech KingHistorian 3.0 exposes an unauthenticated REST API endpoint that returns plaintext username and password for all configured data source connections, including OPC-UA server credentials (T1552.001, T1213).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2023-04-25",
+        "in_kev": False,
+        "epss_score": 0.022,
+        "cbs_properties": ["SCADA", "Historian", "OPCUA", "ICS"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://nvd.nist.gov/vuln/detail/CVE-2023-29465"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.001", "T1213"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",     "techniques": ["T1078.001"]},
+        ],
+        "mitre_primary": "TA0006",
+    },
+    {
+        "cve_id": "CVE-2020-12019",
+        "label": "Inductive_Automation_CredLeak",
+        "category": "ignition",
+        "description": "Inductive Automation Ignition 8.0.12 and prior pass OPC-UA session credentials over a non-encrypted WebSocket, allowing network interceptors on the OT LAN to harvest all HMI-to-PLC authentication tokens in plaintext (T1552.008).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2020-06-09",
+        "in_kev": False,
+        "epss_score": 0.008,
+        "cbs_properties": ["SCADA", "HMI", "OPCUA", "ICS"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-20-161-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2020-12019"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.008", "T1040"]},
+            {"tactic_id": "TA0008", "tactic_name": "Lateral Movement",   "techniques": ["T1078.001"]},
+        ],
+        "mitre_primary": "TA0006",
+    },
+    {
+        "cve_id": "CVE-2021-32980",
+        "label": "Automation_Direct_CredBrute",
+        "category": "automation_direct",
+        "description": "Automation Direct CLICK PLC CPU Modules do not implement account lockout for the web interface, allowing unrestricted brute-force attempts against the admin account and recovery of the PLC project password (T1110.003).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2021-07-08",
+        "in_kev": False,
+        "epss_score": 0.016,
+        "cbs_properties": ["SCADA", "PLC", "ICS", "Modbus"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-21-189-03",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-32980"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1110.003"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access",     "techniques": ["T1078.001"]},
+        ],
+        "mitre_primary": "TA0006",
+    },
+    {
+        "cve_id": "CVE-2022-1778",
+        "label": "Mitsubishi_MELSEC_CredExtract",
+        "category": "mitsubishi",
+        "description": "Mitsubishi Electric MELSEC iQ-R, iQ-F and iQ-L series CPUs allow reading of authentication passwords via the SLMP network protocol without requiring prior authentication, exposing all configured credentials (T1552.001, T1040).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2022-09-19",
+        "in_kev": False,
+        "epss_score": 0.003,
+        "cbs_properties": ["SCADA", "PLC", "Mitsubishi", "ICS", "Modbus"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-22-298-06",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-1778"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.001", "T1040"]},
+            {"tactic_id": "TA0007", "tactic_name": "Discovery",          "techniques": ["T1046"]},
+        ],
+        "mitre_primary": "TA0006",
+    },
+    # ── TA0009 Collection ─────────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2023-28489",
+        "label": "Siemens_SICAM_A8000_DataRead",
+        "category": "siemens_sicam",
+        "description": "Siemens SICAM A8000 RTU before V14 allow unauthenticated access to the web API returning live power grid measurement data, incident logs and firmware version strings — enabling attacker to build a comprehensive OT network map and collect operational data (T1119).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2023-03-14",
+        "in_kev": True,
+        "epss_score": 0.035,
+        "cbs_properties": ["SCADA", "RTU", "Siemens", "ICS", "OPCUA"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-325383.pdf",
+            "https://nvd.nist.gov/vuln/detail/CVE-2023-28489"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0009", "tactic_name": "Collection", "techniques": ["T1119", "T1530"]},
+            {"tactic_id": "TA0007", "tactic_name": "Discovery",   "techniques": ["T1046"]},
+        ],
+        "mitre_primary": "TA0009",
+    },
+    {
+        "cve_id": "CVE-2021-37175",
+        "label": "Siemens_RUGGEDCOM_ConfigRead",
+        "category": "siemens_ruggedcom",
+        "description": "Siemens RUGGEDCOM ROX before V2.14.1 allows low-privileged users to read the full running configuration via the web interface, exposing SNMP community strings, VPN PSKs and inter-site routing tables (T1005, T1119).",
+        "severity": "MEDIUM",
+        "cvss_score": 6.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2021-09-14",
+        "in_kev": False,
+        "epss_score": 0.004,
+        "cbs_properties": ["SCADA", "NetworkDevice", "Siemens", "ICS"],
+        "success_rate": 0.60,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-679512.pdf",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-37175"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0009", "tactic_name": "Collection", "techniques": ["T1005", "T1119"]},
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.001"]},
+        ],
+        "mitre_primary": "TA0009",
+    },
+    {
+        "cve_id": "CVE-2022-2102",
+        "label": "SNC_Sensormatic_DataAccess",
+        "category": "sensormatic",
+        "description": "Sensormatic Electronics VideoEdge NVR versions prior to 5.6.1 allow unauthenticated reading of all camera streams and recorded footage via the API — enabling bulk collection of surveillance footage in OT environments (T1125 Video Capture).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.1,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2022-07-27",
+        "in_kev": False,
+        "epss_score": 0.010,
+        "cbs_properties": ["SCADA", "HMI", "ICS"],
+        "success_rate": 0.80,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-22-207-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-2102"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0009", "tactic_name": "Collection", "techniques": ["T1125", "T1119"]},
+            {"tactic_id": "TA0001", "tactic_name": "Initial Access", "techniques": ["T1190"]},
+        ],
+        "mitre_primary": "TA0009",
+    },
+    {
+        "cve_id": "CVE-2021-43985",
+        "label": "Mattermost_API_DataHarvest",
+        "category": "mattermost",
+        "description": "Mattermost Server before 6.1.1 allows authenticated users to read direct messages from any channel without membership, enabling bulk collection of OT operations team communications through the API (T1213.003 Code Repositories).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2021-12-08",
+        "in_kev": False,
+        "epss_score": 0.003,
+        "cbs_properties": ["SCADA", "Historian", "ICS"],
+        "success_rate": 0.65,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://mattermost.com/security-updates/",
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-43985"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0009", "tactic_name": "Collection", "techniques": ["T1213.003"]},
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552"]},
+        ],
+        "mitre_primary": "TA0009",
+    },
+    {
+        "cve_id": "CVE-2022-0220",
+        "label": "Wonderware_InfoDisc",
+        "category": "wonderware",
+        "description": "Wonderware Historian 2020 R2 and prior expose an unauthenticated OData feed that returns all historian tag names, descriptions and last-known values — giving an attacker a complete operational baseline for process disruption (T1119).",
+        "severity": "HIGH",
+        "cvss_score": 7.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2022-01-18",
+        "in_kev": False,
+        "epss_score": 0.005,
+        "cbs_properties": ["SCADA", "Historian", "OPCUA", "ICS"],
+        "success_rate": 0.70,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.45,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-22-019-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-0220"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0009", "tactic_name": "Collection", "techniques": ["T1119"]},
+            {"tactic_id": "TA0007", "tactic_name": "Discovery",   "techniques": ["T1046"]},
+        ],
+        "mitre_primary": "TA0009",
+    },
+    # ── TA0010 Exfiltration ───────────────────────────────────────────────────
+    {
+        "cve_id": "CVE-2020-14519",
+        "label": "WellinTech_KingScada_Exfil",
+        "category": "wellintech",
+        "description": "WellinTech KingScada 3.1.2.307 and prior allow unauthenticated remote file read via a crafted GetFile request, enabling bulk exfiltration of the SCADA project database, tag definitions and historical process data to an external attacker (T1030, T1048).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2020-09-23",
+        "in_kev": False,
+        "epss_score": 0.025,
+        "cbs_properties": ["SCADA", "Historian", "ICS"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-20-266-01",
+            "https://nvd.nist.gov/vuln/detail/CVE-2020-14519"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1030", "T1048"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1005"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2022-35247",
+        "label": "Siemens_Ruggedcom_DataExfil",
+        "category": "siemens_ruggedcom",
+        "description": "Siemens RUGGEDCOM CROSSBOW before V5.1 allows authenticated remote users to download full device configuration archives including all certificates and PKI material, enabling exfiltration of all network security credentials (T1560.001).",
+        "severity": "MEDIUM",
+        "cvss_score": 6.5,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-08-09",
+        "in_kev": False,
+        "epss_score": 0.004,
+        "cbs_properties": ["SCADA", "NetworkDevice", "Siemens", "ICS"],
+        "success_rate": 0.60,
+        "exploit_cost": 1.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-914168.pdf",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-35247"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1560.001"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1005"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2022-31807",
+        "label": "Siemens_SiNEMA_ConfigExfil",
+        "category": "siemens_sinema",
+        "description": "Siemens SiNEMA Remote Connect Server before V3.1 allows low-privileged authenticated users to export the full VPN configuration including PSKs for all tunnel endpoints, enabling lateral movement to isolated OT network segments (T1048.002).",
+        "severity": "HIGH",
+        "cvss_score": 8.1,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2022-07-12",
+        "in_kev": False,
+        "epss_score": 0.006,
+        "cbs_properties": ["SCADA", "NetworkDevice", "Siemens", "ICS"],
+        "success_rate": 0.72,
+        "exploit_cost": 1.0,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://cert-portal.siemens.com/productcert/pdf/ssa-332410.pdf",
+            "https://nvd.nist.gov/vuln/detail/CVE-2022-31807"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1048.002"]},
+            {"tactic_id": "TA0006", "tactic_name": "Credential Access", "techniques": ["T1552.004"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2021-45979",
+        "label": "Sielox_ICS_DataLeakage",
+        "category": "sielox",
+        "description": "Sielox CLASS access control server v1.38 and prior expose a CSV export endpoint accessible without authentication, returning all badge holder names, access rights and facility codes — enabling physical security mapping and badge cloning (T1119, T1010).",
+        "severity": "CRITICAL",
+        "cvss_score": 9.8,
+        "attack_vector": "NETWORK",
+        "attack_complexity": "LOW",
+        "privileges_required": "NONE",
+        "user_interaction": "NONE",
+        "published": "2021-12-28",
+        "in_kev": False,
+        "epss_score": 0.015,
+        "cbs_properties": ["SCADA", "ICS", "HMI"],
+        "success_rate": 0.85,
+        "exploit_cost": 0.5,
+        "cbs_type": "REMOTE",
+        "probability": 0.35,
+        "references": [
+            "https://nvd.nist.gov/vuln/detail/CVE-2021-45979"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1119", "T1010"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1119"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+    {
+        "cve_id": "CVE-2019-13533",
+        "label": "OPCRouter_DataExfil",
+        "category": "opc_router",
+        "description": "OPC Router before 4.0.1.0 uses an insufficiently protected named pipe for inter-process communication, allowing a local attacker to read all OPC-UA data packets — including live process values and audit trail entries — and relay them to an external server (T1041).",
+        "severity": "HIGH",
+        "cvss_score": 7.8,
+        "attack_vector": "LOCAL",
+        "attack_complexity": "HIGH",
+        "privileges_required": "LOW",
+        "user_interaction": "NONE",
+        "published": "2019-10-25",
+        "in_kev": False,
+        "epss_score": 0.005,
+        "cbs_properties": ["SCADA", "OPCUA", "Historian", "ICS"],
+        "success_rate": 0.60,
+        "exploit_cost": 1.5,
+        "cbs_type": "LOCAL",
+        "probability": 0.35,
+        "references": [
+            "https://www.cisa.gov/uscert/ics/advisories/ICSA-19-290-04",
+            "https://nvd.nist.gov/vuln/detail/CVE-2019-13533"
+        ],
+        "mitre_tactics": [
+            {"tactic_id": "TA0010", "tactic_name": "Exfiltration", "techniques": ["T1041"]},
+            {"tactic_id": "TA0009", "tactic_name": "Collection",    "techniques": ["T1119"]},
+        ],
+        "mitre_primary": "TA0010",
+    },
+]
+
+
+# ── Apply updates ─────────────────────────────────────────────────────────────
+
+def extend_db(db_path: Path, new_entries: list[dict], db_label: str) -> None:
+    raw = json.loads(db_path.read_text())
+    existing_ids = {e["cve_id"] for e in raw["cves"]}
+
+    added = 0
+    for entry in new_entries:
+        if entry["cve_id"] not in existing_ids:
+            raw["cves"].append(entry)
+            existing_ids.add(entry["cve_id"])
+            added += 1
+        else:
+            print(f"  [skip] {entry['cve_id']} already present")
+
+    raw["unique_cve_count"] = len(raw["cves"])
+    db_path.write_text(json.dumps(raw, indent=2))
+    print(f"{db_label}: added {added} entries, total now {len(raw['cves'])}")
+
+
+def verify_coverage(db_path: Path, label: str) -> None:
+    raw = json.loads(db_path.read_text())
+    tactics: dict[str, int] = {}
+    for e in raw["cves"]:
+        for t in e.get("mitre_tactics", []):
+            tid = t.get("tactic_id", "")
+            tactics[tid] = tactics.get(tid, 0) + 1
+    print(f"\n{label} tactic coverage:")
+    for t, c in sorted(tactics.items()):
+        print(f"  {t}: {c}")
+
+
+if __name__ == "__main__":
+    print("Extending windows_cves.json ...")
+    extend_db(WIN_DB, WINDOWS_NEW, "windows_cves")
+
+    print("\nExtending scada_cves.json ...")
+    extend_db(SCADA_DB, SCADA_NEW, "scada_cves")
+
+    verify_coverage(WIN_DB,  "windows_cves")
+    verify_coverage(SCADA_DB, "scada_cves")
+    print("\nDone.")
