@@ -15,7 +15,7 @@
 | `probe` vulnerabilities | REMOTE | ✅ Yes | Windows version fingerprinting before CVE selection |
 | `remote_access` solvability | REMOTE | ✅ Yes | OS/application RCEs: EternalBlue, BlueKeep, ProxyLogon |
 | `remote_access` solvability | LOCAL | ✅ Yes | Local privilege escalation after initial RCE |
-| `credential_leak` solvability | — | ❌ No | S_Lateral owns post-exploitation credential relay |
+| `credential_leak` solvability | — | ❌ No | S_Lateral owns post-exploitation credential extraction (Mimikatz, LAPS) and relay |
 | `discovery` solvability | — | ❌ No | S_Lateral |
 | `goal_access` solvability | — | ❌ No | DCSync belongs to S_Identity |
 

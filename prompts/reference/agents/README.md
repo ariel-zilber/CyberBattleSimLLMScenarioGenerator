@@ -72,12 +72,14 @@ Internet (Z3) ──► [S_Linux] ──► AWS Z6 (10.3.0.0/24) ──► [S_La
 | Agent | Probe (OS ID) | REMOTE Exploit | LOCAL Exploit | Loot (Creds/Goals) | Scout (Graph) |
 |-------|:---:|:---:|:---:|:---:|:---:|
 | **S_Network** | ✅ Network devices | ✅ Network CVEs | ✅ Config extraction | ✅ Own device creds | ❌ |
-| **S_Linux** | ✅ Linux only | ✅ Bitnami CVEs | ✅ Container internals | ❌ (→ S_Recon) | ❌ |
-| **S_Windows** | ✅ Windows only | ✅ OS-level RCEs | ✅ Local PrivEsc | ❌ (→ S_Identity) | ❌ |
+| **S_Linux** | ✅ Linux only | ✅ Bitnami CVEs | ✅ Container internals | ✅ Cloud creds (Container_EnvVars, AWS_CredFile) | ❌ |
+| **S_Windows** | ✅ Windows only | ✅ OS-level RCEs | ✅ Local PrivEsc | ❌ (→ S_Lateral) | ❌ |
 | **S_Identity** | ❌ | ✅ AD protocol attacks | ✅ DCSync / NTDS | ✅ Domain compromise | ❌ |
-| **S_Lateral** | ❌ | ❌ | ✅ PtH / PtT / relay | ✅ Cross-zone credential exec | ❌ |
+| **S_Lateral** | ❌ | ❌ | ✅ Extraction (Mimikatz, LAPS) + relay/exec | ✅ Cross-zone credential exec | ❌ |
 
 **Key:** REMOTE = type: REMOTE in CBS YAML (exploitable from network without prior node access). LOCAL = type: LOCAL (requires owning the node first).
+
+**CBS mechanic split (D-A3):** `credential_leak` solvability = active — the agent fires a LOCAL loot action to extract a credential. `LEAK_KNOWN_CREDENTIALS` constraint = passive — the CBS engine fires it automatically when the node is owned, no agent action needed. The meta-agent "credential store stale" trigger calls **S_Lateral** (not S_Recon) to run extraction.
 
 ---
 

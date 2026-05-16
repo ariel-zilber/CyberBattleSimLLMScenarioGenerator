@@ -44,6 +44,18 @@ import sys
 import textwrap
 from pathlib import Path
 
+from constants import (
+    BFS_EPISODES,
+    BFS_MAX_STEPS,
+    BFS_NUM_AGENTS,
+    MAX_BFS_ROUNDS,
+    MAX_REPAIR_ATTEMPTS,
+    MIN_SOLVE_RATE,
+    REPLACEMENT_MAX_ATTEMPTS,
+    SOLVE_RATE_DESIGN_THRESHOLD,
+    TARGET_SCORE,
+)
+
 TOOLS_DIR       = Path(__file__).resolve().parent
 REPO_ROOT       = TOOLS_DIR.parent
 CYBERSIM_PYTHON = Path("/home/ariel/miniconda3/envs/cybersim/bin/python")
@@ -94,9 +106,9 @@ class PipelineRunner:
         self,
         config_path:    Path,
         dataset_root:   Path,
-        target_score:   float | None = None,   # None = single-pass
-        max_bfs_rounds: int          = 2,       # Phase 2 loop limit
-        min_solve_rate: float        = 0.75,    # Minimum fraction of solvable scenarios
+        target_score:   float | None = None,              # None = single-pass
+        max_bfs_rounds: int          = MAX_BFS_ROUNDS,    # Phase 2 loop limit
+        min_solve_rate: float        = MIN_SOLVE_RATE,    # Minimum fraction of solvable scenarios
         user_prompt:    str          = "",      # Natural-language generation request to persist
     ):
         self._active_config  = config_path.resolve()
@@ -192,8 +204,8 @@ class PipelineRunner:
         """Call apply_critic_fixes on the current config. Returns new config path or None."""
         self._log("  → ACTOR: calling repair_config ...")
         result = subprocess.run(
-            [_python(), "pipeline/phase1/_05_apply_critic_fixes.py",
-             str(self.config_path), "--max-attempts", "2",
+            [_python(), "pipeline/phase2/_05_apply_critic_fixes.py",
+             str(self.config_path), "--max-attempts", str(MAX_REPAIR_ATTEMPTS),
              "--phase2-out", str(self.phase2_out)],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
         )
@@ -503,15 +515,14 @@ class PipelineRunner:
         report_path.write_text(report, encoding="utf-8")
         self._ok(f"phase1_report.txt written → {report_path}")
 
-    def step4_phase2_generate(self, round_info: str = "") -> None:
-        self._header(4, "Phase 2 — Generate stratified scenarios", round_info)
+    def step3_phase2_generate(self, round_info: str = "") -> None:
+        self._header(3, "Phase 2 — Generate scenarios", round_info)
         # Persist generation request so the executive report can display it
         if self.user_prompt:
             self.phase2_out.mkdir(parents=True, exist_ok=True)
             (self.phase2_out / "user_prompt.txt").write_text(
                 self.user_prompt.strip(), encoding="utf-8"
             )
-        strata = _phase2_strata()
         env = {"DATASET_ROOT": str(self.dataset_root)}
         self._run([
             _python(), "pipeline/phase2/01_generator.py",
@@ -519,15 +530,13 @@ class PipelineRunner:
             "--out-dir", str(self.dataset_root / "phase2"),
             "--train", str(int(_read_env("PHASE2_TRAIN_COUNT", "5"))),
             "--test",  str(int(_read_env("PHASE2_TEST_COUNT",  "2"))),
-            "--strata", *strata,
             "--workers", "4",
-            "--force",
         ], env=env)
-        manifest = self.phase2_out / "stratified_manifest.json"
+        manifest = self.phase2_out / "manifest.json"
         if manifest.exists():
             self._ok(f"Manifest: {manifest}")
         else:
-            self._warn("stratified_manifest.json not found after generation")
+            self._warn("manifest.json not found after generation")
 
     def _llm_evaluate(self, round_num: int = 1) -> dict:
         """Run LLM quality evaluation in-process with current runtime metrics.
@@ -658,31 +667,24 @@ class PipelineRunner:
                 f"{len(unsolved)} unsolved scenario(s) — deleting and regenerating ..."
             )
 
-            # Count by split (train/test) and stratum
-            from collections import Counter as _Counter
-            train_strata: dict[str, int] = _Counter()
-            test_strata:  dict[str, int] = _Counter()
-            for scenario_dir, stratum in unsolved:
+            # Count by split (train/test)
+            n_train = 0
+            n_test  = 0
+            for scenario_dir, _ in unsolved:
                 if "/train/" in str(scenario_dir) or "\\train\\" in str(scenario_dir):
-                    train_strata[stratum] += 1
+                    n_train += 1
                 else:
-                    test_strata[stratum] += 1
+                    n_test += 1
 
             # Delete unsolved scenario directories
             for scenario_dir, _ in unsolved:
                 if scenario_dir.exists():
                     shutil.rmtree(scenario_dir)
 
-            # Regenerate replacements per stratum
-            all_strata = sorted(set(list(train_strata) + list(test_strata)))
-            for stratum in all_strata:
-                n_train = train_strata.get(stratum, 0)
-                n_test  = test_strata.get(stratum, 0)
-                if n_train == 0 and n_test == 0:
-                    continue
+            if n_train > 0 or n_test > 0:
                 self._log(
                     f"    Regenerating {n_train} train + {n_test} test "
-                    f"[{stratum}] replacement scenario(s) ..."
+                    f"replacement scenario(s) ..."
                 )
                 self._run([
                     _python(), "pipeline/phase2/01_generator.py",
@@ -690,18 +692,23 @@ class PipelineRunner:
                     "--out-dir", str(self.phase2_out.parent),
                     "--train",   str(n_train),
                     "--test",    str(n_test),
-                    "--strata",  stratum,
                     "--workers", "4",
                 ], abort_on_error=False)
 
             # Re-run BFS on all scenarios (fast re-check for the new ones)
-            self._run([
+            import yaml as _yaml
+            _cfg_meta2 = _yaml.safe_load(self.config_path.read_text()) or {}
+            _agent_type2 = _cfg_meta2.get("metadata", {}).get("agent", "")
+            _recheck_cmd = [
                 _python(), "pipeline/phase2/02_test_env_integration.py",
                 "--data-dir", str(self.phase2_out),
-                "--steps", "5000",
-                "--num-agents", "3",
-                "--episodes", "3",
-            ], abort_on_error=False)
+                "--steps", str(BFS_MAX_STEPS),
+                "--num-agents", str(BFS_NUM_AGENTS),
+                "--episodes", str(BFS_EPISODES),
+            ]
+            if _agent_type2:
+                _recheck_cmd += ["--agent-type", _agent_type2, "--config", str(self.config_path)]
+            self._run(_recheck_cmd, abort_on_error=False)
 
         # Final check
         remaining = sum(
@@ -710,23 +717,29 @@ class PipelineRunner:
         )
         return remaining == 0
 
-    def step5_phase2_evaluate(self) -> None:
+    def step4_phase2_evaluate(self) -> None:
         """Phase 2 runtime actor-critic loop: BFS eval → LLM quality check → repair → repeat."""
         loop_mode  = self.target_score is not None
         max_rounds = self.max_bfs_rounds if loop_mode else 1
 
         for rnd in range(1, max_rounds + 1):
             round_tag = f"R{rnd}/{max_rounds}" if loop_mode else ""
-            self._header(5, "Phase 2 — Heuristic-agent evaluation", round_tag)
+            self._header(4, "Phase 2 — Heuristic-agent evaluation", round_tag)
 
             # ── BFS evaluation ───────────────────────────────────────────────
-            bfs_result = self._run([
+            import yaml as _yaml
+            _cfg_meta = _yaml.safe_load(self.config_path.read_text()) or {}
+            _agent_type = _cfg_meta.get("metadata", {}).get("agent", "")
+            bfs_cmd = [
                 _python(), "pipeline/phase2/02_test_env_integration.py",
                 "--data-dir", str(self.phase2_out),
-                "--steps", "5000",
-                "--num-agents", "3",
-                "--episodes", "3",
-            ], abort_on_error=False)
+                "--steps", str(BFS_MAX_STEPS),
+                "--num-agents", str(BFS_NUM_AGENTS),
+                "--episodes", str(BFS_EPISODES),
+            ]
+            if _agent_type:
+                bfs_cmd += ["--agent-type", _agent_type, "--config", str(self.config_path)]
+            bfs_result = self._run(bfs_cmd, abort_on_error=False)
 
             if bfs_result.returncode == 0:
                 self._ok("BFS evaluation complete — all scenarios solved")
@@ -738,19 +751,19 @@ class PipelineRunner:
             _rm_quick = self._collect_runtime_metrics()
             _sr_quick = _rm_quick.get("solve_rate", 0.0)
 
-            if loop_mode and 0.40 <= _sr_quick < self.min_solve_rate:
+            if loop_mode and SOLVE_RATE_DESIGN_THRESHOLD <= _sr_quick < self.min_solve_rate:
                 self._log(
-                    f"\n  Solve rate {_sr_quick:.0%} ≥ 40% — YAML design is sound. "
+                    f"\n  Solve rate {_sr_quick:.0%} ≥ {SOLVE_RATE_DESIGN_THRESHOLD:.0%} — YAML design is sound. "
                     f"Replacing unsolved scenarios instead of LLM repair ..."
                 )
-                all_solved = self._replace_unsolved_scenarios(max_attempts=3)
+                all_solved = self._replace_unsolved_scenarios(max_attempts=REPLACEMENT_MAX_ATTEMPTS)
                 if all_solved:
                     self._ok(f"All scenarios solvable after replacement")
                 else:
                     self._warn("Some scenarios still unsolvable after max replacements")
 
             # ── LLM critic: 6-dimension quality assessment ───────────────────
-            self._header(5, "Phase 2 — LLM quality evaluation", round_tag)
+            self._header(4, "Phase 2 — LLM quality evaluation", round_tag)
             eval_result = self._llm_evaluate(round_num=rnd)
             score      = eval_result["overall_score"]
             solve_rate = eval_result.get("bfs_metrics", {}).get("solve_rate", 1.0)
@@ -798,14 +811,14 @@ class PipelineRunner:
 
             # Regenerate scenarios for new config before next round
             try:
-                self.step4_phase2_generate(round_info=f"R{rnd+1}/{max_rounds}")
+                self.step3_phase2_generate(round_info=f"R{rnd+1}/{max_rounds}")
             except RuntimeError:
                 self._warn("Scenario generation failed after repair — keeping previous results")
                 self._active_config = REPO_ROOT / "data" / f"{self._initial_domain}.yaml"
                 break
 
-    def step6_phase2_report(self) -> None:
-        self._header(6, "Phase 2 — EDA report + figures")
+    def step5_phase2_report(self) -> None:
+        self._header(5, "Phase 2 — EDA report + figures")
         report_txt  = self.phase2_out / "phase2_report.txt"
         phase1_report = self.phase1_out / "phase1_report.txt"
         report_txt.touch()
@@ -820,8 +833,8 @@ class PipelineRunner:
         self._run(cmd)
         self._ok(f"EDA report → {report_txt.parent.name}/phase2_report.pdf")
 
-    def step7_phase2_graphs(self) -> None:
-        self._header(7, "Phase 2 — Topology graphs (SVG + combined PDF)")
+    def step6_phase2_graphs(self) -> None:
+        self._header(6, "Phase 2 — Topology graphs (SVG + combined PDF)")
         self._run([
             _python(), "pipeline/reporting/01_scenario_graph.py",
             "--recursive", "--pdf",
@@ -855,10 +868,10 @@ class PipelineRunner:
             self.step2_phase1_report()
 
             # ── Phase 2: generate → BFS → LLM eval actor-critic loop ─────────
-            self.step4_phase2_generate()
-            self.step5_phase2_evaluate()  # ← actor-critic loop (BFS + LLM)
-            self.step6_phase2_report()
-            self.step7_phase2_graphs()
+            self.step3_phase2_generate()
+            self.step4_phase2_evaluate()  # ← actor-critic loop (BFS + LLM)
+            self.step5_phase2_report()
+            self.step6_phase2_graphs()
 
         except RuntimeError as exc:
             self._fail(str(exc))
@@ -886,7 +899,7 @@ class PipelineRunner:
 
 def run_executive_report(dataset_root: Path, title: str, log_path: Path) -> None:
     print("\n" + "=" * 66)
-    print("  STEP 8  — Phase 3: Executive summary report (all domains)")
+    print("  STEP 7  — Phase 3: Executive summary report (all domains)")
     print("=" * 66)
     output = dataset_root / "reports" / "executive_report.pdf"
     cmd = [
@@ -936,12 +949,12 @@ def main() -> None:
     parser.add_argument("configs", nargs="+", help="Path(s) to domain config YAML file(s)")
     parser.add_argument("--target-score",   type=float, default=None,
                         help="Enable actor-critic loop: stop when LLM quality ≥ this score")
-    parser.add_argument("--max-bfs-rounds", type=int,   default=2,
-                        help="Max Phase 2 BFS+repair iterations (default: 2)")
-    parser.add_argument("--min-solve-rate", type=float, default=0.75,
-                        help="Minimum fraction of scenarios that must be solvable (default: 0.75)")
+    parser.add_argument("--max-bfs-rounds", type=int,   default=MAX_BFS_ROUNDS,
+                        help=f"Max Phase 2 BFS+repair iterations (default: {MAX_BFS_ROUNDS})")
+    parser.add_argument("--min-solve-rate", type=float, default=MIN_SOLVE_RATE,
+                        help=f"Minimum fraction of scenarios that must be solvable (default: {MIN_SOLVE_RATE})")
     parser.add_argument("--skip-exec-report",  action="store_true",
-                        help="Skip Step 8 (executive report)")
+                        help="Skip Step 7 (executive report)")
     parser.add_argument("--exec-report-title", default="CyberBattleSim Scenario Dataset",
                         help="Title for the executive report")
     parser.add_argument("--user-prompt", default="",

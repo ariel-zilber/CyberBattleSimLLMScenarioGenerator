@@ -305,9 +305,8 @@ REQUIREMENTS:
 @mcp.tool()
 def run_pipeline(
     config_path: str,
-    train_count: int = 3,
-    test_count: int = 1,
-    strata: str = "small",
+    train_count: int = 5,
+    test_count: int = 2,
     skip_fetch: bool = True,
 ) -> Dict[str, Any]:
     """
@@ -320,10 +319,8 @@ def run_pipeline(
         config_path: Path to the domain config YAML file. Can be absolute or
             relative to the repo root. If only a domain name is given (e.g.,
             "active_directory"), looks for data/<name>.yaml automatically.
-        train_count: Number of training scenarios to generate per stratum.
-        test_count: Number of test scenarios to generate per stratum.
-        strata: Comma-separated size strata (e.g., "small", "small,medium",
-            "small,medium,large").
+        train_count: Number of training scenarios to generate.
+        test_count: Number of test scenarios to generate.
         skip_fetch: If True, skip the NVD/EPSS CVE fetch step (faster).
 
     Returns:
@@ -360,11 +357,6 @@ def run_pipeline(
     out_dir = OUTPUT_ROOT / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Parse strata list
-    strata_list = [s.strip() for s in strata.split(",") if s.strip()]
-    valid_strata = {"small", "medium", "large"}
-    strata_list = [s for s in strata_list if s in valid_strata] or ["small"]
-
     # Build pipeline command
     cmd = [
         sys.executable,
@@ -372,7 +364,6 @@ def run_pipeline(
         "--config",  str(p),
         "--train",   str(train_count),
         "--test",    str(test_count),
-        "--strata",  *strata_list,
         "--out-dir", str(out_dir.parent),  # phase1_pipeline.py appends domain name itself
     ]
     if skip_fetch:
@@ -1459,10 +1450,9 @@ def run_phase2_generation(
     output_dir: str = "",
     train_count: int = 5,
     test_count: int = 2,
-    strata: str = "small",
 ) -> Dict[str, Any]:
     """
-    Phase 2, Step 1: Generate stratified train/test scenarios from a domain config.
+    Phase 2, Step 1: Generate train/test scenarios from a domain config.
 
     Calls phase2_generator.py to produce scenario directories under a
     structured output folder (phase2_output/<domain_name>/ by default).
@@ -1471,25 +1461,23 @@ def run_phase2_generation(
 
     Output structure:
         phase2_output/<domain_name>/
-          train/small/CyberBattleSim-<domain>-small-0001/nodes/...
-          train/small/CyberBattleSim-<domain>-small-0002/nodes/...
-          test/small/CyberBattleSim-<domain>-small-10001/nodes/...
+          train/CyberBattleSim-<domain>-0001/nodes/...
+          train/CyberBattleSim-<domain>-0002/nodes/...
+          test/CyberBattleSim-<domain>-10001/nodes/...
 
     Args:
         config_path: Phase 1 domain config YAML. Accepts absolute path,
             repo-relative path, bare name (→ data/<name>.yaml), or versioned
             name like "enterprise_ad_v2" (→ data/enterprise_ad_v2.yaml).
         output_dir: Root for scenario output. Defaults to phase2_output/.
-        train_count: Training scenarios per stratum.
-        test_count: Test scenarios per stratum.
-        strata: Comma-separated size strata: "small", "medium", "large".
+        train_count: Training scenarios.
+        test_count: Test scenarios.
 
     Returns:
         Dict with keys:
           - domain_name: Derived from config filename
           - config_path: Resolved absolute config path
           - scenarios_dir: Absolute path to the domain scenario folder
-          - strata: List of strata generated
           - train_count: Number of train scenarios found on disk
           - test_count: Number of test scenarios found on disk
           - total_scenarios: Train + test
@@ -1512,10 +1500,6 @@ def run_phase2_generation(
     out_root = Path(output_dir) if output_dir else PHASE2_ROOT
     out_root.mkdir(parents=True, exist_ok=True)
 
-    strata_list = [s.strip() for s in strata.split(",") if s.strip() in {"small", "medium", "large"}]
-    if not strata_list:
-        strata_list = ["small"]
-
     cmd = [
         sys.executable,
         str(TOOLS_DIR / "phase2" / "01_generator.py"),
@@ -1523,7 +1507,6 @@ def run_phase2_generation(
         "--out-dir",  str(out_root),
         "--train",    str(train_count),
         "--test",     str(test_count),
-        "--strata",   *strata_list,
     ]
 
     result = _run_subprocess(cmd, timeout=900)
@@ -1746,7 +1729,6 @@ def generate_phase2_report(
         "SCENARIO GENERATION:",
         "─" * 66,
         f"  Output folder  : {gen.get('scenarios_dir', '?')}",
-        f"  Strata         : {', '.join(gen.get('strata', []))}",
         f"  Train scenarios: {gen.get('train_count', 0)}",
         f"  Test scenarios : {gen.get('test_count', 0)}",
         f"  Total          : {gen.get('total_scenarios', 0)}",

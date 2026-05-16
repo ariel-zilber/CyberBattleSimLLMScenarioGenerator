@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cyberbattlesim": {
+      "command": "python",
+      "args": ["mcp_server/domain_generator_mcp.py"],
+      "description": "CyberBattleSim Domain Generator — tools for generating, running, evaluating, and fixing domain config YAML files"
+    }
+  }
+}

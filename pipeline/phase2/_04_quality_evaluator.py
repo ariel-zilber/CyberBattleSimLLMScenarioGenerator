@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
 """
-tools/quality_evaluator.py
+pipeline/phase2/_04_quality_evaluator.py
 ========================================
-LLM-based quality evaluator for CyberBattleSim domain configuration YAML files.
+Quality evaluator for CyberBattleSim domain configuration YAML files.
 
-Evaluates 7 dimensions by sending the YAML + optional runtime agent metrics to
-Claude. No static rule scoring — the LLM is the sole quality judge.
+Evaluates 7 dimensions: 6 via LLM + 1 static rule-count (D-P3).
 
 Dimensions:
-  1. topology_realism      — Network Topology Realism
-  2. vulnerability_realism — Properties & Vulnerabilities Realism
-  3. scenario_difficulty   — Scenario Difficulty
-  4. firewall_realism      — Firewall Rules Realism
-  5. general_realism       — General Realism
-  6. cve_grounding         — CVE Grounding
-  7. template_alignment    — GLOBALTECH Template Alignment
+  1. topology_realism      — Network Topology Realism          [LLM]
+  2. vulnerability_realism — Properties & Vulnerabilities      [LLM]
+  3. scenario_difficulty   — Scenario Difficulty               [LLM]
+  4. firewall_realism      — Firewall Rules Realism            [LLM]
+  5. general_realism       — General Realism                   [LLM]
+  6. cve_grounding         — CVE Grounding                     [LLM]
+  7. template_alignment    — GLOBALTECH Template Alignment     [static rule count]
 
 Usage (CLI):
   python tools/quality_evaluator.py data/enterprise_ad_v2.yaml
@@ -46,7 +45,8 @@ DIMENSION_NAMES: Dict[str, str] = {
     "firewall_realism":      "Firewall Rules Realism",
     "general_realism":       "General Realism",
     "cve_grounding":         "CVE Grounding",
-    "template_alignment":    "GLOBALTECH Template Alignment",
+    # template_alignment is NOT in the LLM dimensions — it is computed statically
+    # from architectural rule counts (D-P3) and injected after LLM evaluation.
 }
 
 # Compact GLOBALTECH zone inventory injected into the LLM prompt (Part 2 of ref.md)
@@ -347,7 +347,7 @@ and do NOT indicate credential saturation or poor design — do NOT penalise the
 configuration for AI security research quality.
 
 ## Task
-Score this configuration on 7 dimensions (0–10 each). Consider both the YAML structure \
+Score this configuration on 6 dimensions (0–10 each). Consider both the YAML structure \
 and any runtime metrics from actual agent runs.
 {_GLOBALTECH_ZONE_CONTEXT}
 
@@ -405,18 +405,6 @@ and any runtime metrics from actual agent runs.
 WordPressInstall, SMBv1, PrintSpooler, DomainController, etc.
 - Both Windows CVEs (EternalBlue, BlueKeep, PrintNightmare) and Linux CVEs for mixed environments
 
-**7. template_alignment** — GLOBALTECH Template Alignment
-Use the GLOBALTECH Zone Reference above to score how faithfully this config represents its target zones.
-- Each service group must map to the correct GLOBALTECH zone and carry the expected properties \
-(e.g. ISPRouter → NetworkDevice+Router, DomainController → Windows+DomainJoined+DomainController)
-- Device naming should mirror the GLOBALTECH inventory (PaloAltoFirewall, CiscoEdgeRouter, AWSWebServer, etc.)
-- The attack scenario must follow a realistic inter-zone path consistent with the GLOBALTECH topology \
-(e.g. Z4→Z2→Z1 for perimeter breach; Z6→Z1 for cloud-to-AD; Z4→Z6→Z1 for credential chain)
-- Services must NOT represent zones they don't belong to (e.g. a "BranchOffice" group in a Z1-only config)
-- If the config spans multiple zones, each zone must be independently recognisable by its service group names
-- Missing expected device types for the claimed zone are a FAIL \
-(e.g. Z1 ServerFarm without DomainController, or Z4 without any ISP/router group)
-
 ## Response Format (STRICT — one block per dimension, then overall)
 
 DIMENSION: topology_realism
@@ -452,14 +440,114 @@ SCORE: <0-10>
 FINDINGS:
 ...
 
-DIMENSION: template_alignment
-SCORE: <0-10>
-FINDINGS:
-...
-
 OVERALL: <X.X>
 SUMMARY: <2–3 sentences on the scenario's overall realism and attack coherence>
 """
+
+
+def _compute_template_alignment_score(cfg: dict) -> dict:
+    """Compute template_alignment score from hard-coded architectural assertions (D-P3).
+
+    Returns the standard dimension dict with score, findings, and a rule summary.
+    Replaces the circular LLM self-graded template_alignment dimension.
+    """
+    findings: List[dict] = []
+    passed = 0
+    total  = 0
+
+    def _check(condition: bool, pass_msg: str, fail_msg: str) -> None:
+        nonlocal passed, total
+        total += 1
+        if condition:
+            passed += 1
+            findings.append(_finding("pass", pass_msg))
+        else:
+            findings.append(_finding("fail", fail_msg))
+
+    services  = cfg.get("services", {})
+    domains   = cfg.get("domains", [])
+    solv      = cfg.get("solvability_vulnerabilities", {})
+    attack_flow = cfg.get("attack_flow", [])
+    settings  = cfg.get("config_settings", {})
+    meta      = cfg.get("metadata", {})
+
+    # R1 — metadata block present with agent field
+    _check(bool(meta.get("agent")),
+           "metadata.agent set",
+           "metadata.agent missing — agent assignment required")
+
+    # R2 — services block non-empty (≥ 2)
+    _check(len(services) >= 2,
+           f"{len(services)} services defined (≥ 2 required)",
+           f"Only {len(services)} service(s) — config under-specified")
+
+    # R3 — at least one goal service
+    goal_svcs = [k for k, v in services.items() if v.get("is_goal")]
+    _check(bool(goal_svcs),
+           f"Goal service(s) defined: {goal_svcs}",
+           "No service has is_goal: true — terminal condition missing")
+
+    # R4 — goal services have value ≥ 1000 (DRL reward shaping)
+    low_val = [k for k in goal_svcs if services[k].get("value", 0) < 1000]
+    _check(not low_val,
+           "All goal services have value ≥ 1000",
+           f"Goal service(s) {low_val} have value < 1000 — reward signal too weak")
+
+    # R5 — attack_flow has ≥ 3 entries (entry → intermediate → goal)
+    _check(len(attack_flow) >= 3,
+           f"attack_flow has {len(attack_flow)} entries (≥ 3 required)",
+           f"attack_flow has only {len(attack_flow)} entries — path too shallow")
+
+    # R6 — at least one domain defined
+    _check(len(domains) >= 1,
+           f"{len(domains)} domain(s) defined",
+           "No domains defined — topology missing")
+
+    # R7 — solvability_vulnerabilities has ≥ 2 non-empty categories
+    nonempty_cats = [k for k, v in solv.items() if isinstance(v, list) and v]
+    _check(len(nonempty_cats) >= 2,
+           f"solvability_vulnerabilities has categories: {nonempty_cats}",
+           f"Only {len(nonempty_cats)} non-empty solvability category — incomplete attack chain")
+
+    # R8 — no ALL/* protocol on internal MUST_CONNECT constraints
+    all_constraints = []
+    for d in domains:
+        all_constraints.extend(d.get("constraints", []))
+    bad_proto = [
+        c for c in all_constraints
+        if isinstance(c, dict)
+        and c.get("type") == "MUST_CONNECT"
+        and str(c.get("protocol", "")).upper() in ("ALL", "*", "ANY", "")
+    ]
+    _check(not bad_proto,
+           "All MUST_CONNECT constraints name a specific protocol",
+           f"{len(bad_proto)} MUST_CONNECT constraint(s) use ALL/*/ANY protocol")
+
+    # R9 — inter_domain_constraints defined if multi-domain
+    if len(domains) > 1:
+        idc = cfg.get("inter_domain_constraints", [])
+        _check(bool(idc),
+               f"inter_domain_constraints defined ({len(idc)} rules)",
+               "Multi-domain config missing inter_domain_constraints")
+    else:
+        passed += 1
+        total  += 1
+        findings.append(_finding("pass", "Single-domain config — inter_domain_constraints N/A"))
+
+    # R10 — start_node defined in config_settings
+    _check(bool(settings.get("start_node")),
+           "config_settings.start_node defined",
+           "config_settings.start_node missing — breach entry undefined")
+
+    score = round((passed / total) * 10) if total else 0
+    return {
+        "name":      "GLOBALTECH Template Alignment",
+        "score":     score,
+        "max_score": 10,
+        "grade":     _grade(score),
+        "findings":  findings,
+        "_rule_summary": f"{passed}/{total} architectural assertions passed",
+    }
 
 
 def _parse_llm_scores(llm_response: str, config_name: str) -> dict:
@@ -540,7 +628,7 @@ def _parse_llm_scores(llm_response: str, config_name: str) -> dict:
     }
 
 
-def _fallback_result(config_name: str) -> dict:
+def _fallback_result(config_name: str, cfg: Optional[dict] = None) -> dict:
     """Neutral result returned when LLM is unavailable."""
     dimensions = {
         k: {"name": v, "score": 5, "max_score": 10, "grade": "D", "findings": [
@@ -548,10 +636,14 @@ def _fallback_result(config_name: str) -> dict:
         ]}
         for k, v in DIMENSION_NAMES.items()
     }
+    # D-P3: still compute static template_alignment even without LLM
+    dimensions["template_alignment"] = _compute_template_alignment_score(cfg or {})
+    all_scores = [d["score"] for d in dimensions.values()]
+    overall = round(sum(all_scores) / len(all_scores), 1)
     return {
         "config_name":   config_name,
-        "overall_score": 5.0,
-        "overall_grade": "D",
+        "overall_score": overall,
+        "overall_grade": _grade(overall),
         "dimensions":    dimensions,
         "top_issues":    [],
         "summary":       "LLM evaluation unavailable. Check ANTHROPIC_API_KEY.",
@@ -598,9 +690,18 @@ class ScenarioQualityEvaluator:
             (_sd / f"llm_response_r{round_num}.txt").write_text(llm_response, encoding="utf-8")
 
         if not llm_response:
-            return _fallback_result(self.name)
+            return _fallback_result(self.name, cfg=self.cfg)
 
         result = _parse_llm_scores(llm_response, self.name)
+
+        # ── D-P3: inject static template_alignment score ──────────────────────
+        ta_dim = _compute_template_alignment_score(self.cfg)
+        result["dimensions"]["template_alignment"] = ta_dim
+        # Recompute overall as mean of all 7 dimensions (6 LLM + 1 static)
+        all_scores = [d["score"] for d in result["dimensions"].values()]
+        result["overall_score"] = round(sum(all_scores) / len(all_scores), 1)
+        result["overall_grade"] = _grade(result["overall_score"])
+
         result["llm_assessment"] = llm_response
         result["cve_metrics"]    = self._extract_cve_metrics()
         return result

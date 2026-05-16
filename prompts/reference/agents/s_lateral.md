@@ -4,7 +4,11 @@
 **CVE source:** `windows_cves.json` (lateral movement subset — exclusive ownership)  
 **Terminal goal (standalone):** First owned node in the target zone (value 10000, is_goal: true)
 
-**Scope:** S_Lateral specializes in **authenticated lateral movement after credential theft**. Given a compromised node with credentials in cache, it selects the correct relay or remote-execution technique to cross a zone boundary. It does not exploit OS memory corruption bugs, does not probe services, and does not perform credential extraction — it receives credentials from prior specialists and decides how to use them.
+**Scope:** S_Lateral specializes in the full **credential lifecycle**: extraction, then relay. It fires LOCAL `credential_leak` techniques (Mimikatz_LSASS, LAPS_Password_Read, etc.) on owned nodes to populate the credential store, then selects the correct relay or remote-execution technique to cross a zone boundary. It does not exploit OS memory corruption bugs and does not probe services — those belong to surface specialists. Cloud-specific credential extraction (Container_EnvVars, AWS_CredFile) stays with S_Linux.
+
+**CBS mechanic split (D-A3):**
+- `credential_leak` solvability entry → **active**: S_Lateral chooses to fire the LOCAL loot action on an owned node → credential enters the store.
+- `LEAK_KNOWN_CREDENTIALS` constraint → **passive**: CBS engine fires automatically when the node holding the constraint is owned — no agent action required.
 
 ---
 
@@ -14,7 +18,7 @@
 |--------------------|------|----------|-----------|
 | `probe` vulnerabilities | — | ❌ No | S_Windows / S_Network own OS fingerprinting |
 | `remote_access` solvability | — | ❌ No | OS RCEs belong to S_Windows / S_Network / S_Linux |
-| `credential_leak` solvability | — | ❌ No | Credential extraction belongs to upstream specialists |
+| `credential_leak` solvability | LOCAL | ✅ Yes | Extraction: Mimikatz_LSASS, LAPS_Password_Read, GPP_Password_Decryption, WinRM_Credential_Cache — populates store for relay (D-A1) |
 | `discovery` solvability | — | ❌ No | Not S_Lateral's role |
 | `lateral_movement` solvability | REMOTE | ✅ Yes | NTLM relay, WinRM remote exec — no RCE needed, creds suffice |
 | `lateral_movement` solvability | LOCAL | ✅ Yes | MSSQL xp_cmdshell, Exchange NTLM relay — requires owning source node |
@@ -31,6 +35,31 @@ Given credential cache + discovered target nodes, the agent must choose:
 - **Execution order** when multiple relay paths exist and some are patched
 
 This is a non-trivial matching and sequencing problem. The optimal policy depends on what is patched, which ports are open, and which credential type was collected. A DRL agent must learn the credential-type × technique × target mapping.
+
+---
+
+## Standalone Episode Flow (D-A2)
+
+No seeded breach — S_Lateral bootstraps credentials itself:
+
+1. **Step 1 — Extraction (LOCAL `credential_leak`):** S_Lateral fires a LOCAL extraction technique on the breach node (e.g., `Solvability.Mimikatz_LSASS`). Credential enters the store.
+2. **Steps 2–N — Relay / Exec (`lateral_movement`):** S_Lateral uses the extracted credential to cross zone boundaries via relay, WinRM exec, MSSQL xp_cmdshell, ADCS cert auth, etc.
+3. **Terminal:** First node in the target zone owned → episode ends.
+
+The breach node is pre-owned (SR 1.0, `breach_node` property) but **credential store starts empty**. There is no dummy `credential_leak` seed entry needed.
+
+---
+
+## Extraction Techniques (`credential_leak` — type: LOCAL)
+
+| Name | Technique | Required Properties | SR |
+|------|-----------|---------------------|----|
+| `Solvability.Mimikatz_LSASS` | LSASS memory dump → NTLM hashes + Kerberos tickets | `Windows`, `DomainJoined` | 0.85 |
+| `Solvability.LAPS_Password_Read` | Read LAPS local admin password from AD attribute | `Windows`, `DomainJoined`, `DomainController` | 0.75 |
+| `Solvability.GPP_Password_Decryption` | Decrypt Group Policy Preferences cpassword | `Windows`, `DomainJoined` | 0.70 |
+| `Solvability.WinRM_Credential_Cache` | Extract WinRM credential cache from DPAPI | `Windows`, `DomainJoined`, `WinRM` | 0.65 |
+
+These are the LOCAL loot actions that populate the credential store. Only S_Lateral may use `credential_leak` solvability entries (S_Windows may not).
 
 ---
 

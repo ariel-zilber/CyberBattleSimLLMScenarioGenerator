@@ -260,7 +260,7 @@ class SolvabilityConstraintProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=resolved_ids),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         self._set_attr(node, 'vulnerabilities', vulns)
@@ -337,7 +337,7 @@ class SolvabilityConstraintProcessor:
 
     def _validate_lateral_movement(self, rules: Dict, auto_fix: bool):
         lateral_reqs = rules.get('lateral_movement_requirements', {})
-        min_ratio = lateral_reqs.get('min_credential_leaking_nodes', 0.7)
+        min_ratio = lateral_reqs.get('min_credential_leaking_nodes', C.DEFAULT_MIN_CREDENTIAL_LEAKING_NODES_RATIO)
 
         if not isinstance(self.nodes, dict):
             return
@@ -395,7 +395,7 @@ class SolvabilityConstraintProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=cached_creds),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         self._set_attr(node, 'vulnerabilities', vulns)
@@ -423,7 +423,7 @@ class SolvabilityConstraintProcessor:
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         self._set_attr(node, 'vulnerabilities', vulns)
@@ -498,3 +498,14 @@ class SolvabilityConstraintProcessor:
             obj[attr] = value
         else:
             setattr(obj, attr, value)
+
+    def _get_vulnerability_cost(self, tmpl: dict) -> float:
+        """Apply Q10 cost normalization if enabled."""
+        cost = tmpl.get('cost', C.DEFAULT_CVE_COST)
+        if C.ENABLE_TECHNIQUE_COST_SCALING:
+            # A "technique" is defined as a template without an explicit exploit_cve
+            # or one that includes protocol-abuse identifiers (ShadowCredentials, DCSync, etc.)
+            has_cve = 'exploit_cve' in tmpl or 'CVE-' in tmpl.get('name', '')
+            if not has_cve:
+                return C.DEFAULT_TECHNIQUE_COST
+        return cost

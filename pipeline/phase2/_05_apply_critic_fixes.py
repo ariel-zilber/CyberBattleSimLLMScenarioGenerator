@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-tools/apply_critic_fixes.py
+pipeline/phase2/_05_apply_critic_fixes.py
 ============================
 Feedback-loop tool: reads the LLM critic response and quality evaluator
 findings for a domain config, then asks Claude to produce a repaired YAML
@@ -35,13 +35,23 @@ from pathlib import Path
 
 import yaml
 
-TOOLS_DIR  = Path(__file__).resolve().parent
-REPO_ROOT  = TOOLS_DIR.parent
-PROMPTS    = REPO_ROOT / "prompts"
-DATA_DIR   = REPO_ROOT / "data"
+TOOLS_DIR    = Path(__file__).resolve().parent   # pipeline/phase1/ (or phase2/ post D-P6)
+_PIPELINE_DIR = TOOLS_DIR.parent               # pipeline/
+REPO_ROOT    = _PIPELINE_DIR.parent            # repo root
+PROMPTS      = REPO_ROOT / "prompts"
+DATA_DIR     = REPO_ROOT / "data"
 
 sys.path.insert(0, str(TOOLS_DIR))
-from scenario_quality_evaluator import ScenarioQualityEvaluator  # noqa: E402
+sys.path.insert(0, str(_PIPELINE_DIR))         # for constants.py
+from quality_evaluator import ScenarioQualityEvaluator  # noqa: E402
+from constants import (  # noqa: E402
+    FLAT_TOPOLOGY_DIAMETER,
+    MAX_DENSITY_TARGET,
+    MAX_REPAIR_ATTEMPTS,
+    MIN_DIAMETER_TARGET,
+    MIN_SOLVE_RATE,
+    SOLVABILITY_PROB_RANGE,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -144,16 +154,16 @@ def _runtime_repair_rules(bfs: dict) -> str:
     rules.append(
         f"## RUNTIME METRICS (from {n_scen} agent-evaluated scenarios)\n"
         f"  Solved         : {solved}/{n_scen} ({solve_rt:.0%})\n"
-        f"  Mean diameter  : {diameter:.1f}  (target > 3)\n"
-        f"  Mean density   : {density:.3f}  (target 0.05–0.40)\n"
+        f"  Mean diameter  : {diameter:.1f}  (target > {MIN_DIAMETER_TARGET})\n"
+        f"  Mean density   : {density:.3f}  (target 0.05–{MAX_DENSITY_TARGET})\n"
         f"  Mean creds     : {mean_creds}\n"
         f"  Mean nodes     : {node_count}"
     )
 
-    if density > 0.40:
+    if density > MAX_DENSITY_TARGET:
         cred_leak_nodes = round(node_count * bfs.get("mean_creds", 0) / max(node_count, 1), 1)
         rules.append(
-            f"\n## HIGH DENSITY FIX REQUIRED (density={density:.3f} >> 0.40 target)\n"
+            f"\n## HIGH DENSITY FIX REQUIRED (density={density:.3f} >> {MAX_DENSITY_TARGET} target)\n"
             "The credential graph is saturated — too many nodes leak credentials to too many targets.\n"
             "**MANDATORY changes to reduce density:**\n"
             "1. Set `solvability_rules.lateral_movement_requirements.min_credential_leaking_nodes` to 0.10–0.12\n"
@@ -167,19 +177,23 @@ def _runtime_repair_rules(bfs: dict) -> str:
             "   `target_coverage` ≤ 0.20 — wide discovery spread inflates density"
         )
 
-    if diameter <= 2:
+    if diameter < MIN_DIAMETER_TARGET:
         rules.append(
-            f"\n## FLAT TOPOLOGY FIX REQUIRED (diameter={diameter:.1f} ≤ 2, target > 3)\n"
-            "The attack graph collapses to ≤ 2 hops — agents reach goal nodes trivially.\n"
-            "**MANDATORY changes to increase diameter:**\n"
-            "1. Remove any MUST_CONNECT that creates a shortcut between non-adjacent tiers\n"
+            f"\n## LOW DIAMETER — STRUCTURAL FIX REQUIRED"
+            f" (diameter={diameter:.1f} < {MIN_DIAMETER_TARGET} target)\n"
+            "Attack paths are too short — DRL agents learn trivial policies.\n"
+            "**MANDATORY structural changes (DO NOT address by tweaking success_rate alone):**\n"
+            f"- Add ≥ 2 domains to the config (min_domains: 2), each with its own RFC 1918 /24 subnet\n"
+            "- Add IDC (inter_domain_constraints) with MUST_CONNECT entries to enforce choke points\n"
+            "- Remove any MUST_CONNECT that creates a shortcut between non-adjacent tiers\n"
             "   (e.g. LegacyWorkstations→ModernWorkstations Kerberos is a peer-to-peer shortcut;\n"
             "    use Kerberos only from workstations→DomainControllers)\n"
-            "2. Remove contradictory constraint pairs: if you have MUST_NOT_CONNECT(RDP) and\n"
-            "   MUST_CONNECT(Kerberos) on the same source→target pair, drop the MUST_CONNECT\n"
-            "3. Add MUST_NOT_CONNECT between non-adjacent tiers in inter_domain_constraints:\n"
-            "   DMZTier→DataTier: MUST_NOT_CONNECT all groups except through AppTier gateway\n"
-            "4. Reduce density (see above) — high edge density directly causes low diameter"
+            "- Remove contradictory constraint pairs: if MUST_NOT_CONNECT(RDP) and\n"
+            "   MUST_CONNECT(Kerberos) exist on the same pair, remove the MUST_CONNECT\n"
+            "- Add MUST_NOT_CONNECT between non-adjacent tiers:\n"
+            "   DMZTier→DataTier: MUST_NOT_CONNECT except through AppTier gateway\n"
+            "- Reduce density if > 0.40 (high edge density directly causes low diameter)\n"
+            "**NOTE: SR-only tweaks will be REJECTED. Adding ≥ 2 domains is the required fix.**"
         )
 
     if solve_rt > 0.80:
@@ -187,10 +201,10 @@ def _runtime_repair_rules(bfs: dict) -> str:
             f"\n## SOLVE RATE TOO HIGH ({solve_rt:.0%} > 80% target)\n"
             "Scenario is too easy. Increase difficulty:\n"
             "1. Reduce `start_node.leaked_node_coverage` to 0.05–0.10\n"
-            "2. Reduce `solvability_vulnerabilities.remote_access[*].probability` to 0.40–0.55\n"
+            f"2. Reduce `solvability_vulnerabilities.remote_access[*].probability` to {SOLVABILITY_PROB_RANGE[0]}–{SOLVABILITY_PROB_RANGE[1]}\n"
             "3. Increase `cost` on goal_access vulnerabilities to 2.0–3.0"
         )
-    elif solve_rt < 0.75 and n_scen >= 3:
+    elif solve_rt < MIN_SOLVE_RATE and n_scen >= 3:
         severity = "CRITICALLY LOW" if solve_rt < 0.30 else "TOO LOW"
         rules.append(
             f"\n## SOLVE RATE {severity} ({solve_rt:.0%} — target ≥ 75%)\n"
@@ -484,48 +498,19 @@ def repair_config(
             if top_issues:
                 llm_quality_summary += "\n\nTop issues from last run:\n" + "\n".join(
                     f"  [{i.get('severity','?')}] {i.get('dimension','')}: {i.get('message','')} "
-                    for i in top_issues
-                )
-
-    # ── Repair loop ──────────────────────────────────────────────────────────
-    prompt = _build_repair_prompt(original_yaml, runtime_rules, llm_quality_summary)
-    
-    repaired_text = None
-    
-    # 1. Try Claude
-    if anthropic_key:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            if verbose: print(f"  [ACTOR] Calling Claude for repair (attempt 1/1) ...")
-            msg = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=4096,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            repaired_text = msg.content[0].text
-        except Exception as exc:
-            print(f"  [WARN] Claude repair failed: {exc}")
-
-    # 2. Try Gemini API fallback
-    if not repaired_text and google_key:
-        if verbose: print(f"  [ACTOR] Calling Gemini API for repair fallback (attempt 1/1) ...")
-        repaired_text = _call_gemini(prompt, google_key)
-
-    # 3. Try Gemini CLI fallback
-    if not repaired_text:
-        if verbose: print(f"  [ACTOR] Calling Gemini CLI for repair fallback (attempt 1/1) ...")
-        repaired_text = _call_gemini_cli(prompt)
-
-    if not repaired_text:
-        print("ERROR: All repair attempts (Claude, Gemini API, Gemini CLI) failed.")
-        return None
-
-    yaml_block = _extract_yaml_block(repaired_text)
                     for i in top_issues[:5]
                 )
             if summary:
                 llm_quality_summary += f"\n\nOverall summary: {summary}"
+
+    # ── Set up LLM client ────────────────────────────────────────────────────
+    client = None
+    if anthropic_key:
+        try:
+            import anthropic
+            client = anthropic.Anthropic(api_key=anthropic_key)
+        except Exception as exc:
+            print(f"  [WARN] Claude client init failed: {exc}")
 
     # ── Evaluate original ───────────────────────────────────────────────────
     original_result  = _evaluate(original_cfg, domain_name)
@@ -698,6 +683,28 @@ def repair_config(
 
     output_path.write_text(best_yaml, encoding="utf-8")
 
+    # ── D-P2: Post-repair Phase 1 validation ─────────────────────────────────
+    import subprocess as _sp
+    _checker_ok = True
+    for _vcmd in [
+        [sys.executable, str(_PIPELINE_DIR / "phase1" / "02_config_checker.py"),
+         str(output_path), "--strict"],
+        [sys.executable, str(_PIPELINE_DIR / "phase1" / "03_validate_zone_coverage.py"),
+         str(output_path)],
+    ]:
+        _vr = _sp.run(_vcmd, capture_output=True, text=True, cwd=str(REPO_ROOT))
+        if _vr.returncode == 1:
+            print(f"  ✗ Post-repair Phase 1 check FAILED: {_vcmd[1]}")
+            for _l in _vr.stdout.splitlines()[-8:]:
+                print(f"      {_l}")
+            _checker_ok = False
+            break
+
+    if not _checker_ok:
+        print("\n✗ Repair aborted — post-repair Phase 1 validation failed.")
+        output_path.unlink(missing_ok=True)
+        return None
+
     # Save repair log
     repair_log = {
         "domain":          domain_name,
@@ -750,8 +757,8 @@ def main():
     parser.add_argument("config", type=Path, help="Path to domain config YAML")
     parser.add_argument("--inplace", action="store_true",
                         help="Overwrite the original file instead of creating a new version")
-    parser.add_argument("--max-attempts", type=int, default=2,
-                        help="Maximum repair attempts (default: 2)")
+    parser.add_argument("--max-attempts", type=int, default=MAX_REPAIR_ATTEMPTS,
+                        help=f"Maximum repair attempts (default: {MAX_REPAIR_ATTEMPTS})")
     parser.add_argument("--quiet", action="store_true", help="Suppress verbose output")
     parser.add_argument("--phase2-out", type=Path, default=None, metavar="DIR",
                         help="Phase 2 output directory containing bfs_metrics.json and "

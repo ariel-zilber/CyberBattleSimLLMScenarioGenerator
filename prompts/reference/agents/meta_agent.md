@@ -17,7 +17,7 @@ The meta-agent does not execute CBS actions directly. It selects a specialist; t
 | Zone recognition | Frontier ∩ Z6 Linux container nodes | Call S_Linux |
 | Zone recognition | Frontier ∩ Z1 Windows nodes, no domain foothold | Call S_Windows |
 | Protocol recognition | Z1 domain foothold exists, AD protocols exposed | Call S_Identity |
-| Credential store monitoring | Credential store stale (no new creds in N steps) | Call S_Recon |
+| Credential store monitoring | Credential store stale (no new creds in N steps) | Call S_Lateral (fires LOCAL credential_leak to extract new creds; D-A3) |
 | Stagnation recovery | Specialist fails K consecutive actions | Call S_Recon |
 | Prerequisite enforcement | DomainController not owned → S_Mgmt unavailable | Avoid S_Mgmt routing |
 | Goal priority | DomainController owned, Z8 reachable | Call S_Identity (DSRM) then pivot to Z8 |

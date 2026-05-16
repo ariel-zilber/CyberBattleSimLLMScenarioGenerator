@@ -12,7 +12,6 @@ from cbsim.domain_loader import YamlDomainLoader
 from cbsim.components.network_utils import NetworkUtils
 from cbsim.components.node_builder import NodeBuilder
 from cbsim.components.constraint_engine import ConstraintEngine
-from cbsim.components.topology_manager import TopologyManager
 from cbsim.components.solvability_constraint_processor import SolvabilityConstraintProcessor
 from cbsim.components.vulnerability_manager import VulnerabilityManager
 from cbsim.components.solvability_post_processor import SolvabilityPostProcessor
@@ -24,7 +23,7 @@ from cyberbattle.simulation.vulenrabilites import (
 )
 class UniversalNetworkGenerator(NetworkGenerator):
 
-    def __init__(self, domain_config_path: str, gml_file_path: str = None, seed: int = None, **kwargs) -> None:
+    def __init__(self, domain_config_path: str, seed: int = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
         if seed is not None:
@@ -33,8 +32,6 @@ class UniversalNetworkGenerator(NetworkGenerator):
         self.loader = YamlDomainLoader(domain_config_path)
         self.config = self.loader.data
         self.domain_loader = self.loader  # reuse — no double parse
-
-        self.topology_manager = TopologyManager(gml_file_path, config=self.config.get('config', {}))
 
         self.all_nodes: Dict[str, NodeInfo] = {}
         self.domain_node_map: Dict[str, List[str]] = {}
@@ -60,8 +57,6 @@ class UniversalNetworkGenerator(NetworkGenerator):
         self.domain_subnets = self.utils.calculate_domain_subnets(
             self.loader.get_all_domains(), yaml_subnets=yaml_subnets
         )
-        backbone_subnets = self.topology_manager.get_backbone_subnets()
-        self.domain_subnets.update(backbone_subnets)
         self.domain_gateways = self.utils.calculate_domain_gateways(
             self.loader.get_all_domains(), domain_subnets=self.domain_subnets
         )

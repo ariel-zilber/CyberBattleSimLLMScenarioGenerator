@@ -402,12 +402,12 @@ class SolvabilityPostProcessor:
     def _ensure_credential_chain(self):
         rules = self.config.get('solvability_rules', {})
         lateral = rules.get('lateral_movement_requirements', {})
-        min_ratio = lateral.get('min_credential_leaking_nodes', 0.7)
+        min_ratio = lateral.get('min_credential_leaking_nodes', C.DEFAULT_MIN_CREDENTIAL_LEAKING_NODES_RATIO)
         # max_credential_leaking_nodes caps the probabilistic phase to prevent
         # over-saturation (density > 0.40).  Defaults to 1.5× the minimum so
         # existing configs without the key are unaffected.
         max_ratio = lateral.get('max_credential_leaking_nodes',
-                                min(min_ratio * 1.5, 1.0))
+                                min(min_ratio * C.DEFAULT_MAX_CREDENTIAL_LEAKING_NODES_MULTIPLIER, 1.0))
 
         non_start = [nid for nid in self.nodes if nid != 'start']
         total = len(non_start)
@@ -702,7 +702,7 @@ class SolvabilityPostProcessor:
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         node.vulnerabilities = vulns
@@ -741,7 +741,7 @@ class SolvabilityPostProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_cached),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         node.vulnerabilities = vulns
@@ -776,7 +776,7 @@ class SolvabilityPostProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=discovered),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         node.vulnerabilities = vulns
@@ -807,7 +807,7 @@ class SolvabilityPostProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=outcome,
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         node.vulnerabilities = vulns
@@ -861,7 +861,7 @@ class SolvabilityPostProcessor:
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_creds),
             reward_string=tmpl['reward'],
-            cost=tmpl['cost'],
+            cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
         node.vulnerabilities = vulns
@@ -896,3 +896,14 @@ class SolvabilityPostProcessor:
             if nid.startswith(domain_name):
                 return nid
         return None
+
+    def _get_vulnerability_cost(self, tmpl: dict) -> float:
+        """Apply Q10 cost normalization if enabled."""
+        cost = tmpl.get('cost', C.DEFAULT_CVE_COST)
+        if C.ENABLE_TECHNIQUE_COST_SCALING:
+            # A "technique" is defined as a template without an explicit exploit_cve
+            # or one that includes protocol-abuse identifiers (ShadowCredentials, DCSync, etc.)
+            has_cve = 'exploit_cve' in tmpl or 'CVE-' in tmpl.get('name', '')
+            if not has_cve:
+                return C.DEFAULT_TECHNIQUE_COST
+        return cost

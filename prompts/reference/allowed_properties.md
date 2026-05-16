@@ -319,12 +319,13 @@ These properties are derived from `data/vulnerability_db/network_devices_cves.js
 | `ShellShock` | Vulnerable to Bash Shellshock |
 
 ### 4.5 Cloud Security
-| Property     | Description                | Use case           |
-| ------------ | -------------------------- | ------------------ |
-| `IAM`          | IAM roles/policies present | IAM enumeration    |
-| `IAMRole`      | Assumed IAM role           | Role enumeration   |
-| `PublicRead`   | Public read access         | S3 bucket exposure |
-| `PublicSubnet` | Public cloud subnet        | External exposure  |
+| Property        | Description                | Use case           |
+| --------------- | -------------------------- | ------------------ |
+| `IAM`           | IAM roles/policies present | IAM enumeration    |
+| `IAMRole`       | Assumed IAM role           | Role enumeration   |
+| `PublicRead`    | Public read access         | S3 bucket exposure |
+| `PublicSubnet`  | Public cloud subnet        | External exposure  |
+| `CloudFederated` | Azure AD / ADFS Seamless SSO federated identity enabled on node | Required target property for `Solvability.CloudIAM_LDAP_Write` (Z6→Z1 cloud-to-corp crossing). Must appear on the Z1 DomainController that accepts the federated IAM token via AD Seamless SSO. |
 ---
 
 ## 5. Access & Authentication Properties

@@ -95,7 +95,7 @@ CyberBattleSimDomainGenerator/
 │   ├── rename_folders.py
 │   └── validate_data.py
 │
-├── cli.py                        # Entry point: generate one scenario from a GML + YAML config
+├── cli.py                        # Entry point: generate one scenario from a YAML config
 ├── .env                          # Local environment config (see .env.example)
 └── .env.example                  # Template for environment config
 ```

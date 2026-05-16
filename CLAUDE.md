@@ -14,9 +14,11 @@ cbsim/              Core network generator package (UniversalNetworkGenerator)
 data_preprocessing/ One-time data acquisition + CVE curation (run before pipeline)
 pipeline/           Python package — per-run generation pipeline
   phase1/           01_template_validator → 02_config_checker → 03_validate_zone_coverage
-                    → _04_quality_evaluator (LLM CRITIC) → _05_apply_critic_fixes (LLM ACTOR)
-                    quality_evaluator.py is an import shim for _04_quality_evaluator
+                    (static soundness: schema, CVE catalog, zone coverage, agent-category allowlist)
+                    quality_evaluator.py is an import shim → phase2/_04_quality_evaluator
   phase2/           01_generator → 02_test_env_integration → 03_evaluator
+                    → _04_quality_evaluator (LLM CRITIC) → _05_apply_critic_fixes (LLM ACTOR)
+                    (dynamic quality: BFS solvability, LLM critic score, actor repair)
   reporting/        01_scenario_graph → 02_human_report / 02_executive / 02_presentation (parallel)
 mcp_server/         MCP server exposing pipeline to Claude (domain_generator_mcp.py)
 prompts/            LLM context library

@@ -50,7 +50,19 @@ from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import re
 import yaml
+
+# Import AGENT_CATEGORY_ALLOWLIST from pipeline/constants.py (one level up from phase1/)
+_PIPELINE_DIR = Path(__file__).resolve().parent.parent
+_REPO_ROOT = _PIPELINE_DIR.parent
+CATALOG_PATH = _REPO_ROOT / "prompts" / "reference" / "vulnerability_catalog.md"
+
+sys.path.insert(0, str(_PIPELINE_DIR))
+try:
+    from constants import AGENT_CATEGORY_ALLOWLIST  # noqa: E402
+except ImportError:
+    AGENT_CATEGORY_ALLOWLIST: dict = {}  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +90,33 @@ def info(msg): print(f"  {C.BLUE}→{C.END} {msg}")
 def _load(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f) or {}
+
+
+def load_vulnerability_catalog() -> Dict[str, Set[str]]:
+    """Parse vulnerability_catalog.md to map categories to technique names."""
+    if not CATALOG_PATH.is_file():
+        return {}
+
+    catalog: Dict[str, Set[str]] = defaultdict(set)
+    current_category = ""
+
+    with open(CATALOG_PATH) as f:
+        for line in f:
+            # Match ## Category: `name`
+            cat_match = re.search(r"## Category: `([^`]+)`", line)
+            if cat_match:
+                current_category = cat_match.group(1)
+                continue
+
+            if not current_category:
+                continue
+
+            # Match | `Solvability.Name` |
+            tech_match = re.search(r"\|\s*`?(Solvability\.[^`\s|]+)`?\s*\|", line)
+            if tech_match:
+                catalog[current_category].add(tech_match.group(1))
+
+    return dict(catalog)
 
 
 # ---------------------------------------------------------------------------
@@ -131,6 +170,26 @@ def check_identifiers(cfg: dict) -> List[str]:
             issues.append(
                 f"os_management_ports '{os_label}': port '{port_label}' "
                 f"not in identifiers.standard_ports"
+            )
+
+    # Check for orphaned identifiers (Q1)
+    used_props: Set[str] = set()
+    for svc in services.values():
+        used_props.update(svc.get("default_properties", []))
+    for domain in cfg.get("domains", []):
+        for g in domain.get("groups", []):
+            used_props.update(g.get("properties", []))
+    for category, vulns in solv.items():
+        if isinstance(vulns, list):
+            for v in vulns:
+                used_props.update(v.get("match_properties", []))
+    
+    for prop in base_props:
+        if prop not in used_props and prop != "breach_node":
+            issues.append(
+                f"orphaned property: '{prop}' is declared in "
+                f"identifiers.base_properties but never used in any service, group, "
+                f"or vulnerability match_properties"
             )
 
     return issues
@@ -316,16 +375,76 @@ def check_vulnerability_coverage(cfg: dict) -> List[str]:
                 f"— agent cannot exploit it"
             )
 
-    # Check required vulnerability categories are present
-    required_categories = {"remote_access", "credential_leak", "discovery", "goal_access"}
-    present_categories  = set(k for k, v in solv.items() if isinstance(v, list) and v)
+    # Determine required categories based on metadata.agent (D-A5)
+    agent = cfg.get("metadata", {}).get("agent", "")
+    if agent and AGENT_CATEGORY_ALLOWLIST and agent in AGENT_CATEGORY_ALLOWLIST:
+        required_categories = set(AGENT_CATEGORY_ALLOWLIST[agent])
+    else:
+        required_categories = {"remote_access", "credential_leak", "discovery", "goal_access"}
+    present_categories = set(k for k, v in solv.items() if isinstance(v, list) and v)
     for cat in required_categories:
         if cat not in present_categories:
             issues.append(
                 f"solvability_vulnerabilities is missing category '{cat}' "
+                f"(required for agent '{agent or 'unknown'}') "
                 f"— scenarios will have incomplete attack chains"
             )
 
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# Check 4b — Agent-category allowlist (D-A5)
+# ---------------------------------------------------------------------------
+
+def check_agent_category_allowlist(cfg: dict, catalog: Optional[Dict[str, Set[str]]] = None) -> List[str]:
+    """Validate that every solvability category and technique belongs to the agent's allowlist
+    and the canonical catalog sections.
+    """
+    issues = []
+    agent = cfg.get("metadata", {}).get("agent", "")
+    if not agent:
+        return []
+
+    permitted = AGENT_CATEGORY_ALLOWLIST.get(agent) if AGENT_CATEGORY_ALLOWLIST else None
+    if permitted is None and AGENT_CATEGORY_ALLOWLIST:
+        issues.append(
+            f"metadata.agent '{agent}' is not in the AGENT_CATEGORY_ALLOWLIST "
+            f"(known agents: {', '.join(AGENT_CATEGORY_ALLOWLIST)})"
+        )
+        return issues
+
+    permitted_set = set(permitted) if permitted else set()
+    solv = cfg.get("solvability_vulnerabilities", {})
+    for category, vulns in solv.items():
+        if not isinstance(vulns, list) or not vulns:
+            continue
+
+        # 1. Check if category is allowed for this agent
+        if AGENT_CATEGORY_ALLOWLIST and category not in permitted_set:
+            issues.append(
+                f"Agent '{agent}' is not permitted to use solvability category "
+                f"'{category}' (allowed: {sorted(permitted_set)})"
+            )
+
+        # 2. Check if techniques in this category are canonically valid (Q6)
+        if catalog and category in catalog:
+            valid_techniques = catalog[category]
+            for v in vulns:
+                vname = v.get("name", "")
+                if vname and vname not in valid_techniques:
+                    # Check if it exists in ANOTHER category (hallucinated category pairing)
+                    other_cats = [cat for cat, techs in catalog.items() if vname in techs]
+                    if other_cats:
+                        issues.append(
+                            f"Technique '{vname}' is in category '{category}' but canonically "
+                            f"belongs to {other_cats} — incorrect category pairing"
+                        )
+                    else:
+                        issues.append(
+                            f"Technique '{vname}' in category '{category}' is not in the "
+                            f"canonical vulnerability_catalog.md"
+                        )
     return issues
 
 
@@ -492,23 +611,26 @@ def main():
 
     cfg = _load(str(path))
     services = cfg.get("services", {})
+    catalog = load_vulnerability_catalog()
 
     all_errors:   List[str] = []
     all_warnings: List[str] = []
 
     # ---- Run all checks ----
     checks = [
-        ("Config settings",          check_config_settings(cfg)),
-        ("Identifiers completeness",  check_identifiers(cfg)),
+        ("Config settings",            check_config_settings(cfg)),
+        ("Identifiers completeness",   check_identifiers(cfg)),
         ("Service / group consistency", check_groups(cfg)),
-        ("Vulnerability coverage",    check_vulnerability_coverage(cfg)),
-        ("Constraint soundness",      check_constraints(cfg)),
+        ("Vulnerability coverage",     check_vulnerability_coverage(cfg)),
+        ("Agent-category allowlist",   check_agent_category_allowlist(cfg, catalog)),
+        ("Constraint soundness",       check_constraints(cfg)),
     ]
     depth_issues, depth_report = check_attack_flow_depth(cfg)
 
     # Categorise: unreachable / depth<2 = error; everything else = warning (some are errors)
     ERROR_KEYWORDS = ["UNREACHABLE", "unsolvable", "not defined", "not in identifiers",
-                      "is missing", "must be", "breach_node"]
+                      "is missing", "must be", "breach_node", "incorrect category pairing",
+                      "vulnerability_catalog.md", "orphaned property"]
     for check_name, issues in checks:
         for issue in issues:
             if any(k.lower() in issue.lower() for k in ERROR_KEYWORDS):

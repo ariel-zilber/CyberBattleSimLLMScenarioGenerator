@@ -63,11 +63,28 @@ The output is parsed by a strict Python validator. All of these are non-negotiab
 
 ---
 
+## AGENT-CATEGORY SOLVABILITY ALLOWLIST
+
+The valid `solvability_vulnerabilities` categories depend on `metadata.agent`. Using a category outside the agent's allowlist is a **hard validation error** (`02_config_checker.py` → `check_agent_category_allowlist()`).
+
+| Agent | Permitted `solvability_vulnerabilities` keys |
+|-------|----------------------------------------------|
+| `S_Network` | `remote_access`, `credential_leak` |
+| `S_Linux` | `remote_access`, `credential_leak` |
+| `S_Windows` | `remote_access` only |
+| `S_Identity` | `remote_access`, `goal_access` |
+| `S_Lateral` | `lateral_movement`, `credential_leak` |
+| `Meta` | all 5: `remote_access`, `credential_leak`, `discovery`, `goal_access`, `lateral_movement` |
+
+`discovery` is unused in specialist configs — only Meta scenarios may include it.
+
+---
+
 ## CRITICAL SCHEMA RULES
 
 Four structural rules that cause parser crashes if violated — see `anti_patterns.md` for full before/after examples:
 
-- **`solvability_vulnerabilities`**: DICT with exactly 4 keys: `remote_access`, `credential_leak`, `discovery`, `goal_access`. NOT a list.
+- **`solvability_vulnerabilities`**: DICT whose keys are solvability categories. Valid keys depend on `metadata.agent` — see **AGENT-CATEGORY SOLVABILITY ALLOWLIST** above. NOT a list. Never include a category outside the agent's permitted set.
 - **`constraint_vulnerabilities`**: DICT with exactly 2 keys: `leak_known_credentials`, `leak_neighbors`. NOT a list.
 - **`start_node.vulnerabilities`**: DICT with exactly 2 keys: `discovery`, `credential_leak`. NOT a list.
 - **`inter_domain_constraints`**: Required for all multi-domain configs. Never omit. Every constraint must name a specific protocol.

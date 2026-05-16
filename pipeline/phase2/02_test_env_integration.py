@@ -22,9 +22,16 @@ import networkx as nx
 from pathlib import Path
 from collections import Counter, deque
 
-# Add repo root to sys.path so we can import cyberbattle
-REPO_ROOT = Path(__file__).resolve().parent.parent
+# Add repo root and pipeline/ to sys.path
+REPO_ROOT    = Path(__file__).resolve().parent.parent
+_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # pipeline/
 sys.path.append(str(REPO_ROOT))
+sys.path.insert(0, str(_PIPELINE_DIR))
+
+try:
+    from constants import AGENT_CATEGORY_ALLOWLIST as _AGENT_ALLOWLIST  # noqa: E402
+except ImportError:
+    _AGENT_ALLOWLIST: dict = {}  # type: ignore[assignment]
 
 try:
     from cyberbattle._env.improved.improved_cyberbattle_env import ImprovedCyberBattleEnv
@@ -213,8 +220,10 @@ class BFSPlannerAgent:
 
     _MAX_RETRIES = 10
 
-    def __init__(self, env: ImprovedCyberBattleEnv):
+    def __init__(self, env: ImprovedCyberBattleEnv,
+                 allowed_vuln_names: set | None = None):
         self.env = env
+        self._allowed_vuln_names = allowed_vuln_names  # D-P1: restrict BFS to agent's action space
         base = (env.local_vulnerabilities_count
                 + env.remote_vulnerabilities_count
                 + env.port_count)
@@ -256,6 +265,8 @@ class BFSPlannerAgent:
 
         scored = []  # (score, src_id, tgt_id, action_idx)
 
+        _allowed = self._allowed_vuln_names  # None = no filter (D-P1)
+
         # Phase 0 — local exploits on owned nodes (score 0.0, tried first to
         # generate credentials and properties before lateral movement).
         for src_id in owned:
@@ -263,6 +274,8 @@ class BFSPlannerAgent:
             if nd is None:
                 continue
             for vuln_id, vuln_data in nd.vulnerabilities.items():
+                if _allowed is not None and vuln_id not in _allowed:
+                    continue
                 if vuln_data.type == VulnerabilityType.LOCAL:
                     idx = self.env.get_vulnerability_index(vuln_id)
                     if idx != -1:
@@ -286,6 +299,8 @@ class BFSPlannerAgent:
 
                 # Remote vulnerability exploits
                 for vuln_id, vuln_data in tgt_data.vulnerabilities.items():
+                    if _allowed is not None and vuln_id not in _allowed:
+                        continue
                     if vuln_data.type == VulnerabilityType.REMOTE:
                         if tgt_id not in owned:
                             idx = self.env.get_vulnerability_index(vuln_id)
@@ -1016,7 +1031,7 @@ def _call_llm_critic(prompt: str, output_dir: Path) -> None:
     print(f"    Preview: {preview}...")
 
 
-def test_dynamic_solve(scenario_dir: Path, max_steps: int = 10000, num_agents: int = 1, max_episodes: int = 5, eval_difficulty: bool = False) -> tuple[bool, dict]:
+def test_dynamic_solve(scenario_dir: Path, max_steps: int = 10000, num_agents: int = 1, max_episodes: int = 5, eval_difficulty: bool = False, allowed_vuln_names: set | None = None) -> tuple[bool, dict]:
     """
     Evaluate one scenario directory using the BFSPlannerAgent and optionally the GreedyExplorationAgent.
 
@@ -1061,7 +1076,7 @@ def test_dynamic_solve(scenario_dir: Path, max_steps: int = 10000, num_agents: i
 
     for episode in range(1, max_episodes + 1):
         env.reset()
-        agent = BFSPlannerAgent(env)
+        agent = BFSPlannerAgent(env, allowed_vuln_names=allowed_vuln_names)
         episode_reward = 0.0
         episode_actions: list[int] = []
 
@@ -1420,8 +1435,40 @@ def main():
     parser.add_argument("--num-agents", type=int, default=5, help="Number of cooperative agents in the swarm")
     parser.add_argument("--episodes", type=int, default=5, help="Number of times to retry the scenario before failing completely")
     parser.add_argument("--eval-difficulty", action="store_true", help="Run additional greedy exploration trials to measure learning gap")
-    
+    parser.add_argument("--agent-type", type=str, default=None,
+                        help="Agent type for BFS action-space filtering (D-P1), e.g. S_Windows")
+    parser.add_argument("--config", type=str, default=None,
+                        help="Path to domain config YAML (required with --agent-type)")
+
     args = parser.parse_args()
+
+    # ── D-P1: Build allowed_vuln_names from config + agent allowlist ──────────
+    allowed_vuln_names: set | None = None
+    if args.agent_type and _AGENT_ALLOWLIST:
+        permitted_cats = set(_AGENT_ALLOWLIST.get(args.agent_type, []))
+        if permitted_cats and args.config:
+            try:
+                import yaml as _yaml
+                cfg = _yaml.safe_load(open(args.config).read()) or {}
+                solv = cfg.get("solvability_vulnerabilities", {})
+                allowed_vuln_names = set()
+                for cat, entries in solv.items():
+                    if cat in permitted_cats and isinstance(entries, list):
+                        for entry in entries:
+                            name = entry.get("name") if isinstance(entry, dict) else None
+                            if name:
+                                allowed_vuln_names.add(name)
+                if allowed_vuln_names:
+                    print(f"  [D-P1] BFS restricted to {len(allowed_vuln_names)} vulns "
+                          f"for agent '{args.agent_type}' "
+                          f"(categories: {sorted(permitted_cats)})")
+                else:
+                    print(f"  [D-P1] WARNING: no vulns found for agent '{args.agent_type}' "
+                          f"in config — BFS will run unrestricted")
+                    allowed_vuln_names = None
+            except Exception as exc:
+                print(f"  [D-P1] WARNING: could not build allowlist from config: {exc}")
+
     scenarios_to_test = []
 
     if args.scenario:
@@ -1437,11 +1484,12 @@ def main():
     
     for scenario_path in scenarios_to_test:
         solved, metrics = test_dynamic_solve(
-            scenario_path, 
-            max_steps=args.steps, 
-            num_agents=args.num_agents, 
+            scenario_path,
+            max_steps=args.steps,
+            num_agents=args.num_agents,
             max_episodes=args.episodes,
-            eval_difficulty=args.eval_difficulty
+            eval_difficulty=args.eval_difficulty,
+            allowed_vuln_names=allowed_vuln_names,
         )
         all_metrics.append(metrics)
         if solved:
