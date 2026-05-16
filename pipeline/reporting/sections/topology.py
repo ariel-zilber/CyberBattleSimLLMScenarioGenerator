@@ -1,6 +1,6 @@
 import re as _re
 from pathlib import Path
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 from ..data_utils import OUTCOME_KEYS, OUTCOME_SHORT
 from ..visual_utils import save_outcome_chart, save_topology_radar
 

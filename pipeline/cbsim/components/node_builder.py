@@ -255,7 +255,7 @@ class NodeBuilder:
                 description=disc_def['description'],
                 type=VulnerabilityType.LOCAL,
                 outcome=LeakedNodesId(nodes=leaked_nodes),
-                reward_string=disc_def['reward'],
+                reward_string=disc_def.get('reward', 'Exploit successful'),
                 cost=disc_def['cost'],
                 rates=Rates(successRate=disc_def['success_rate'])
             )
@@ -271,7 +271,7 @@ class NodeBuilder:
                 description=cred_def['description'],
                 type=VulnerabilityType.LOCAL,
                 outcome=LeakedCredentials(credentials=cached_creds),
-                reward_string=cred_def['reward'],
+                reward_string=cred_def.get('reward', 'Exploit successful'),
                 cost=cred_def['cost'],
                 rates=Rates(successRate=cred_def['success_rate'])
             )

@@ -42,6 +42,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
 from pathlib import Path
 
 from constants import (
@@ -146,12 +147,33 @@ class PipelineRunner:
         return self._active_config.stem
 
     @property
+    def domain_root(self) -> Path:
+        return self.dataset_root / self.domain
+
+    @property
+    def config_out(self) -> Path:
+        return self.domain_root / "config"
+
+    @property
+    def scenarios_out(self) -> Path:
+        return self.domain_root / "scenarios"
+
+    @property
+    def metrics_out(self) -> Path:
+        return self.domain_root / "metrics"
+
+    @property
+    def reports_out(self) -> Path:
+        return self.domain_root / "reports"
+
+    # Deprecated path aliases (for backward compatibility during migration)
+    @property
     def phase1_out(self) -> Path:
-        return self.dataset_root / "phase1" / self.domain
+        return self.config_out
 
     @property
     def phase2_out(self) -> Path:
-        return self.dataset_root / "phase2" / self.domain
+        return self.scenarios_out
 
     def _advance_config(self, new_path: Path) -> None:
         old = self._active_config.name
@@ -189,7 +211,11 @@ class PipelineRunner:
     def _run(self, cmd: list, cwd: Path = REPO_ROOT,
              abort_on_error: bool = True, env: dict | None = None) -> subprocess.CompletedProcess:
         self._log(f"  $ {' '.join(str(c) for c in cmd)}")
+        # Merge provided env with current env, and force DATASET_ROOT
         run_env = {**os.environ, **(env or {})}
+        run_env["DATASET_ROOT"] = str(self.dataset_root)
+        # Ensure repo root is in path for consolidated packages
+        run_env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + run_env.get("PYTHONPATH", "")
         
         start_t = time.perf_counter()
         result  = subprocess.run(
@@ -228,7 +254,7 @@ class PipelineRunner:
         result = subprocess.run(
             [_python(), "pipeline/phase2/_05_apply_critic_fixes.py",
              str(self.config_path), "--max-attempts", str(MAX_REPAIR_ATTEMPTS),
-             "--phase2-out", str(self.phase2_out)],
+             "--phase2-out", str(self.scenarios_out)],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
         )
         for line in result.stdout.splitlines():
@@ -265,7 +291,7 @@ class PipelineRunner:
         from collections import Counter as _Counter
 
         all_metrics = []
-        for jf in self.phase2_out.rglob("run_metrics.json"):
+        for jf in self.scenarios_out.rglob("run_metrics.json"):
             try:
                 all_metrics.append(json.loads(jf.read_text()))
             except Exception:
@@ -483,13 +509,12 @@ class PipelineRunner:
 
     def step1_phase1_validate(self, round_info: str = "") -> None:
         self._header(1, "Phase 1 — Config validation + structural check", round_info)
-        self.phase1_out.mkdir(parents=True, exist_ok=True)
+        self.config_out.mkdir(parents=True, exist_ok=True)
         self._run([
             _python(), "pipeline/phase1/pipeline.py",
             "--config", str(self.config_path),
             "--skip-fetch",
             "--train", "3", "--test", "1",
-            "--strata", "small",
         ])
         self._ok(f"Config validated — output in phase1/{self.domain}")
 
@@ -497,7 +522,7 @@ class PipelineRunner:
         """Hard-gate: verify config covers the correct GLOBALTECH zones per zone_manifest.yaml."""
         self._header("1b", "Phase 1 — GLOBALTECH zone coverage check")
         result = self._run(
-            [_python(), "pipeline/phase1/03_validate_zone_coverage.py", str(self.config_path)],
+            [_python(), "pipeline/phase1/validate_zone_coverage.py", str(self.config_path)],
             abort_on_error=False,
         )
         if result.returncode == 1:
@@ -510,9 +535,12 @@ class PipelineRunner:
             self._warn("No manifest entry for this config — zone coverage check skipped")
 
     def step2_phase1_report(self) -> None:
-        """Write a simple Phase 1 validation summary (no quality score — that runs in Phase 2)."""
-        self._header(2, "Phase 1 — Generate phase1_report.txt")
-        report_path = self.phase1_out / "phase1_report.txt"
+        """Write a simple Phase 1 validation summary and generate the schema diagram."""
+        self._header(2, "Phase 1 — Generate phase1_summary.txt + diagram")
+        self.reports_out.mkdir(parents=True, exist_ok=True)
+        report_path = self.reports_out / "phase1_summary.txt"
+        
+        # 1. Write Text Report
         lines_raw = self.config_path.read_text(encoding="utf-8").splitlines()
         desc = next(
             (l.lstrip("#").strip() for l in lines_raw[3:15]
@@ -533,28 +561,40 @@ class PipelineRunner:
             "─" * 66,
             "",
         ])
-        report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(report, encoding="utf-8")
-        self._ok(f"phase1_report.txt written → {report_path}")
+        
+        # 2. Generate Schema Diagram (PNG) in the config output folder
+        self.config_out.mkdir(parents=True, exist_ok=True)
+        diag_path = self.config_out / "schema_diagram.png"
+        self._run([
+            _python(), "pipeline/reporting/scenario_graph.py",
+            str(self.config_path),
+            "--config", "--schema-png",
+            "--out", str(diag_path),
+        ])
+        
+        self._ok(f"phase1_summary.txt written → {report_path.parent.name}/{report_path.name}")
+        if diag_path.exists():
+            self._ok(f"Schema diagram generated → {diag_path.parent.name}/{diag_path.name}")
 
     def step3_phase2_generate(self, round_info: str = "") -> None:
         self._header(3, "Phase 2 — Generate scenarios", round_info)
         # Persist generation request so the executive report can display it
         if self.user_prompt:
-            self.phase2_out.mkdir(parents=True, exist_ok=True)
-            (self.phase2_out / "user_prompt.txt").write_text(
+            self.scenarios_out.mkdir(parents=True, exist_ok=True)
+            (self.scenarios_out / "user_prompt.txt").write_text(
                 self.user_prompt.strip(), encoding="utf-8"
             )
         env = {"DATASET_ROOT": str(self.dataset_root)}
         self._run([
-            _python(), "pipeline/phase2/01_generator.py",
+            _python(), "pipeline/phase2/generator.py",
             "--config", str(self.config_path),
-            "--out-dir", str(self.dataset_root / "phase2"),
+            "--out-dir", str(self.domain_root),
             "--train", str(int(_read_env("PHASE2_TRAIN_COUNT", "5"))),
             "--test",  str(int(_read_env("PHASE2_TEST_COUNT",  "2"))),
             "--workers", "4",
         ], env=env)
-        manifest = self.phase2_out / "manifest.json"
+        manifest = self.scenarios_out / "manifest.json"
         if manifest.exists():
             self._ok(f"Manifest: {manifest}")
         else:
@@ -575,8 +615,8 @@ class PipelineRunner:
 
         # ── Persist BFS metrics ───────────────────────────────────────────────
         rm_json = json.dumps(rm, indent=2, default=str)
-        (self.phase2_out / "bfs_metrics.json").write_text(rm_json, encoding="utf-8")
-        (self.phase2_out / f"bfs_metrics_r{round_num}.json").write_text(rm_json, encoding="utf-8")
+        (self.metrics_out / "bfs_metrics.json").write_text(rm_json, encoding="utf-8")
+        (self.metrics_out / f"bfs_metrics_r{round_num}.json").write_text(rm_json, encoding="utf-8")
 
         self._log(
             f"\n  Runtime metrics (round {round_num}): "
@@ -595,7 +635,7 @@ class PipelineRunner:
         self._log("  → CRITIC: calling LLM quality evaluator ...")
         result = ScenarioQualityEvaluator(cfg, config_name=self.domain).evaluate_with_llm(
             graph_metrics=rm,
-            save_dir=str(self.phase2_out),
+            save_dir=str(self.config_out),
             round_num=round_num,
         )
         score = result["overall_score"]
@@ -630,11 +670,11 @@ class PipelineRunner:
 
         # ── Persist quality evaluation ────────────────────────────────────────
         q_json = json.dumps(result, indent=2, default=str)
-        (self.phase2_out / "quality_evaluation.json").write_text(q_json, encoding="utf-8")
-        (self.phase2_out / f"quality_evaluation_r{round_num}.json").write_text(q_json, encoding="utf-8")
+        (self.metrics_out / "quality_evaluation.json").write_text(q_json, encoding="utf-8")
+        (self.metrics_out / f"quality_evaluation_r{round_num}.json").write_text(q_json, encoding="utf-8")
 
         # ── Append round to pipeline_iterations.json ──────────────────────────
-        iter_path = self.phase2_out / "pipeline_iterations.json"
+        iter_path = self.metrics_out / "pipeline_iterations.json"
         try:
             iterations = json.loads(iter_path.read_text(encoding="utf-8")) if iter_path.exists() else []
         except Exception:
@@ -672,7 +712,7 @@ class PipelineRunner:
         for attempt in range(1, max_attempts + 1):
             # ── Find unsolved scenarios ────────────────────────────────────────
             unsolved: list[tuple[Path, str]] = []
-            for mf in self.phase2_out.rglob("run_metrics.json"):
+            for mf in self.scenarios_out.rglob("run_metrics.json"):
                 try:
                     data = json.loads(mf.read_text())
                 except Exception:
@@ -715,9 +755,9 @@ class PipelineRunner:
                     f"replacement scenario(s) ..."
                 )
                 self._run([
-                    _python(), "pipeline/phase2/01_generator.py",
+                    _python(), "pipeline/phase2/generator.py",
                     "--config",  str(self.config_path),
-                    "--out-dir", str(self.phase2_out.parent),
+                    "--out-dir", str(self.scenarios_out.parent),
                     "--train",   str(n_train),
                     "--test",    str(n_test),
                     "--workers", "4",
@@ -728,8 +768,8 @@ class PipelineRunner:
             _cfg_meta2 = _yaml.safe_load(self.config_path.read_text()) or {}
             _agent_type2 = _cfg_meta2.get("metadata", {}).get("agent", "")
             _recheck_cmd = [
-                _python(), "pipeline/phase2/02_test_env_integration.py",
-                "--data-dir", str(self.phase2_out),
+                _python(), "pipeline/phase2/test_env_integration.py",
+                "--data-dir", str(self.scenarios_out),
                 "--steps", str(BFS_MAX_STEPS),
                 "--num-agents", str(BFS_NUM_AGENTS),
                 "--episodes", str(BFS_EPISODES),
@@ -740,7 +780,7 @@ class PipelineRunner:
 
         # Final check
         remaining = sum(
-            1 for mf in self.phase2_out.rglob("run_metrics.json")
+            1 for mf in self.scenarios_out.rglob("run_metrics.json")
             if not json.loads(mf.read_text()).get("is_solved", False)
         )
         return remaining == 0
@@ -759,8 +799,8 @@ class PipelineRunner:
             _cfg_meta = _yaml.safe_load(self.config_path.read_text()) or {}
             _agent_type = _cfg_meta.get("metadata", {}).get("agent", "")
             bfs_cmd = [
-                _python(), "pipeline/phase2/02_test_env_integration.py",
-                "--data-dir", str(self.phase2_out),
+                _python(), "pipeline/phase2/test_env_integration.py",
+                "--data-dir", str(self.scenarios_out),
                 "--steps", str(BFS_MAX_STEPS),
                 "--num-agents", str(BFS_NUM_AGENTS),
                 "--episodes", str(BFS_EPISODES),
@@ -847,30 +887,36 @@ class PipelineRunner:
 
     def step5_phase2_report(self) -> None:
         self._header(5, "Phase 2 — EDA report + figures")
-        report_txt  = self.phase2_out / "phase2_report.txt"
-        phase1_report = self.phase1_out / "phase1_report.txt"
+        self.reports_out.mkdir(parents=True, exist_ok=True)
+        report_txt  = self.reports_out / "phase2_eda.txt"
+        phase1_report = self.reports_out / "phase1_summary.txt"
         report_txt.touch()
         cmd = [
-            _python(), "pipeline/reporting/02_human_report.py",
-            "--scenarios-dir", str(self.phase2_out),
+            _python(), "pipeline/reporting/human_report.py",
+            "--scenarios-dir", str(self.scenarios_out),
             "--append-to",     str(report_txt),
             "--config",        str(self.config_path),
         ]
         if phase1_report.exists():
             cmd += ["--phase1-report", str(phase1_report)]
         self._run(cmd)
-        self._ok(f"EDA report → {report_txt.parent.name}/phase2_report.pdf")
+        
+        # Human report saves PDF to report_txt.with_suffix(".pdf")
+        self._ok(f"EDA report → {self.reports_out.name}/phase2_eda.pdf")
 
     def step6_phase2_graphs(self) -> None:
         self._header(6, "Phase 2 — Topology graphs (SVG + combined PDF)")
+        self.reports_out.mkdir(parents=True, exist_ok=True)
         self._run([
-            _python(), "pipeline/reporting/01_scenario_graph.py",
+            _python(), "pipeline/reporting/scenario_graph.py",
             "--recursive", "--pdf",
-            str(self.phase2_out),
+            str(self.scenarios_out),
         ])
-        combined = self.phase2_out / "all_scenarios_combined.pdf"
+        # Find the combined PDF and move it to reports_out if it's not there
+        combined = self.scenarios_out / "all_scenarios_combined.pdf"
         if combined.exists():
-            self._ok(f"Combined PDF → {combined.name}")
+            shutil.move(combined, self.reports_out / "all_scenarios_combined.pdf")
+            self._ok(f"Combined PDF → {self.reports_out.name}/all_scenarios_combined.pdf")
 
     # ── Main run ──────────────────────────────────────────────────────────────
 
@@ -936,8 +982,9 @@ class PipelineRunner:
             "scenarios_replaced": sum(r["count"] for r in self.telemetry["retries"])
         }
 
-        # Save to phase2 directory if it exists, otherwise logs_dir
-        out_dir = self.phase2_out if self.phase2_out.exists() else self.logs_dir
+        # Save to metrics directory
+        out_dir = self.metrics_out
+        out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / "telemetry.json"
         
         try:
@@ -961,8 +1008,8 @@ def run_executive_report(dataset_root: Path, title: str, log_path: Path) -> None
     print("=" * 66)
     output = dataset_root / "reports" / "executive_report.pdf"
     cmd = [
-        _python(), "pipeline/reporting/02_executive.py",
-        "--phase2-root", str(dataset_root / "phase2"),
+        _python(), "pipeline/reporting/executive_report.py",
+        "--phase2-root", str(dataset_root),
         "--output", str(output),
         "--title", title,
     ]

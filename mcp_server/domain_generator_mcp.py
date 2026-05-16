@@ -88,8 +88,8 @@ _ENV = _load_env()
 # All pipeline outputs go under DATASET_ROOT (configured in .env)
 _DEFAULT_DATASET_ROOT = REPO_ROOT / "datasets"
 DATASET_ROOT = Path(_ENV.get("DATASET_ROOT", str(_DEFAULT_DATASET_ROOT)))
-OUTPUT_ROOT  = DATASET_ROOT / "phase1"   # Phase 1 pipeline output
-PHASE2_ROOT  = DATASET_ROOT / "phase2"   # Phase 2 scenario output
+OUTPUT_ROOT  = DATASET_ROOT
+# Standardized output structure: OUTPUT_ROOT / <domain> / [config|scenarios|metrics|reports]
 
 MAX_RETRIES         = int(_ENV.get("MAX_RETRIES",          "10"))
 PHASE1_MIN_SCORE    = float(_ENV.get("PHASE1_MIN_SCORE",   "7.0"))
@@ -1497,7 +1497,7 @@ def run_phase2_generation(
     # Strip _v1/_v2 Phase 1 version suffix from domain name
     domain_name = re.sub(r"_v\d+$", "", p.stem)
 
-    out_root = Path(output_dir) if output_dir else PHASE2_ROOT
+    out_root = Path(output_dir) if output_dir else OUTPUT_ROOT
     out_root.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -1803,9 +1803,9 @@ def generate_phase2_report(
 
     report_text = "\n".join(lines)
 
-    # Persist report inside the scenario folder
-    sc_dir = Path(gen.get("scenarios_dir", PHASE2_ROOT / scenario_name))
-    report_dir = sc_dir
+    # Standardized structure: OUTPUT_ROOT / <domain> / reports /
+    domain_root = Path(gen.get("scenarios_dir", OUTPUT_ROOT / scenario_name)).parent
+    report_dir = domain_root / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     report_path = report_dir / "phase2_report.txt"
     report_path.write_text(report_text, encoding="utf-8")
@@ -1962,7 +1962,7 @@ def get_pipeline_config() -> Dict[str, Any]:
     return {
         "dataset_root":        str(DATASET_ROOT),
         "phase1_output_root":  str(OUTPUT_ROOT),
-        "phase2_output_root":  str(PHASE2_ROOT),
+        "phase2_output_root":  str(OUTPUT_ROOT),
         "max_retries":         MAX_RETRIES,
         "phase1_min_score":    PHASE1_MIN_SCORE,
         "phase2_min_solve_rate": PHASE2_MIN_SOLVE,
@@ -2035,7 +2035,7 @@ def run_phase2_pipeline(
     cfg = get_pipeline_config()
 
     # Resolve output dir for this attempt
-    attempt_dir = PHASE2_ROOT / scenario_name / f"attempt_{attempt:02d}"
+    attempt_dir = OUTPUT_ROOT / scenario_name / f"attempt_{attempt:02d}"
     attempt_dir.mkdir(parents=True, exist_ok=True)
 
     # Apply .env defaults for unset params
@@ -2737,7 +2737,7 @@ def generate_cve_graphs(
     except Exception as exc:
         return {"status": "failed", "error": f"Evaluation failed: {exc}"}
 
-    dest = Path(out_dir) if out_dir else (PHASE2_ROOT / p.stem / "cve_graphs")
+    dest = Path(out_dir) if out_dir else (OUTPUT_ROOT / p.stem / "cve_graphs")
     dest.mkdir(parents=True, exist_ok=True)
 
     try:

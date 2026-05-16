@@ -37,7 +37,7 @@ REPLACEMENT_MAX_ATTEMPTS: int = 3
 # Maximum seed-replacement iterations before giving up on unsolved scenarios.
 # Each iteration deletes unsolved scenario dirs and regenerates with new seeds.
 
-# ── BFS evaluation (values passed to 02_test_env_integration.py) ──────────────
+# ── BFS evaluation (values passed to test_env_integration.py) ──────────────
 
 BFS_MAX_STEPS: int = 5000
 # Maximum CBS environment steps per BFS episode. Larger values allow BFS to
@@ -73,7 +73,7 @@ SOLVABILITY_PROB_RANGE: tuple[float, float] = (0.40, 0.55)
 # Recommended probability range for solvability_vulnerabilities entries when
 # the Actor is instructed to reduce density via probability reduction.
 
-# ── Agent-category allowlist (used by 02_config_checker.py) ──────────────────
+# ── Agent-category allowlist (used by config_checker.py) ──────────────────
 
 AGENT_CATEGORY_ALLOWLIST: dict[str, list[str]] = {
     "S_Network":  ["remote_access", "credential_leak"],

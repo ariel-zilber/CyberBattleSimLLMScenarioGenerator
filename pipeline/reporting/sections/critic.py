@@ -1,7 +1,7 @@
 import json
 import re as _re
 from pathlib import Path
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 
 def _e_md(text: str) -> str:

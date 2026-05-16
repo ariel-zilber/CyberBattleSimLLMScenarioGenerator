@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pipeline/phase2/01_generator.py
+pipeline/phase2/generator.py
 ===============================
 Simplified scenario generator. Generates a fixed-scale dataset based exactly
 on the node counts defined in the domain config YAML.
@@ -15,7 +15,7 @@ Output structure:
 Usage
 -----
 # Generate 30 train + 10 test scenarios
-python3 pipeline/phase2/01_generator.py \
+python3 pipeline/phase2/generator.py \
     --config data/active_directory.yaml \
     --out-dir generated_data/ad_dataset \
     --train 30 --test 10
@@ -159,7 +159,7 @@ def main():
         sys.exit(1)
 
     domain_name = config_path.stem
-    out_root    = Path(args.out_dir) / domain_name
+    out_root    = Path(args.out_dir) / "scenarios"
     out_root.mkdir(parents=True, exist_ok=True)
 
     prefix = f"CyberBattleSim-{domain_name.replace('_','-')}"
@@ -193,7 +193,7 @@ def main():
         _write_metadata(train_dir, True,  train_success, str(config_path))
         _write_metadata(test_dir,  False, test_success,  str(config_path))
 
-        # Write a generation manifest
+        # Write a generation manifest to the DOMAIN ROOT (for executive report discovery)
         manifest = {
             "config":       str(config_path),
             "domain":       domain_name,
@@ -202,7 +202,7 @@ def main():
             "total":        train_success + test_success,
             "generated_at": datetime.now().isoformat(),
         }
-        manifest_path = out_root / "manifest.json"
+        manifest_path = out_root.parent / "manifest.json"
         with open(manifest_path, "w") as f:
             json.dump(manifest, f, indent=2)
         print(f"\n  Manifest: {manifest_path}")

@@ -39,16 +39,16 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 import matplotlib.patches as mpatches
 
+# Setup path
 TOOLS_DIR    = Path(__file__).resolve().parent        # pipeline/reporting/
-ANALYSIS_DIR = TOOLS_DIR / "analysis"                  # pipeline/reporting/analysis/
-PHASE1_DIR   = TOOLS_DIR.parent / "phase1"             # pipeline/phase1/
-sys.path.insert(0, str(TOOLS_DIR))
-sys.path.insert(0, str(ANALYSIS_DIR))
-sys.path.insert(0, str(PHASE1_DIR))
+REPO_ROOT    = TOOLS_DIR.parent.parent                # project root
 
-from domain_analysis import DomainAnalysis  # noqa: E402
-import cbs_eda_graphs as _graphs            # noqa: E402
-import cve_scenario_graphs as _cve_graphs   # noqa: E402
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from pipeline.reporting.analysis.domain_analysis import DomainAnalysis  # noqa: E402
+import pipeline.reporting.analysis.cbs_eda_graphs as _graphs            # noqa: E402
+import pipeline.reporting.cve_scenario_graphs as _cve_graphs   # noqa: E402
 
 
 # ── Patch _save_or_show so every plot_* call saves a PNG instead of showing ──
@@ -293,9 +293,7 @@ def _svg_to_png(svg_path: Path, png_path: Path) -> "Path | None":
 def _generate_svg_graphs_for_scenario(scenario_dir: Path) -> "list[tuple[str,Path]]":
     """Run process_scenario(), convert SVGs to PNG, return (title, png_path) list."""
     try:
-        import importlib
-        _mod = importlib.import_module("pipeline.reporting.01_scenario_graph")
-        process_scenario = _mod.process_scenario
+        from pipeline.reporting.scenario_graph import process_scenario
     except ImportError as exc:
         print(f"  [WARN] generate_scenario_graph not importable: {exc}")
         return []
@@ -1299,7 +1297,7 @@ def main():
     analyzer.run_full_analysis()
 
     # ── Generate and save all plots ──────────────────────────────────────────
-    import cbs_eda_graphs as _g
+    import pipeline.reporting.analysis.cbs_eda_graphs as _g
 
     def _save_to_file_final(fig, name="plot"):
         figures_dir.mkdir(parents=True, exist_ok=True)

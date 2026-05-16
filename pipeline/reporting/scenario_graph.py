@@ -29,6 +29,11 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+# Ensure repo root is in path for consolidated packages
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 import yaml
 from collections import deque
 
@@ -1913,11 +1918,35 @@ def main():
                     help="Recursively find and process all directories containing a 'nodes/' folder")
     ap.add_argument("--out", metavar="FILE",
                     help="Output SVG path (ignored in recursive mode)")
+    ap.add_argument("--config", action="store_true",
+                    help="Target is a domain config YAML instead of a scenario directory")
+    ap.add_argument("--schema-png", action="store_true",
+                    help="Generate a high-level architecture PNG from the domain config (used with --config)")
     ap.add_argument("--pdf", action="store_true",
                     help="Compile all generated SVGs into a single master PDF")
     args = ap.parse_args()
 
     target = Path(args.target_dir).resolve()
+
+    if args.config:
+        if not target.is_file():
+            sys.exit(f"[error] --config specified but target is not a file: {target}")
+        
+        if args.schema_png:
+            out_path = Path(args.out).resolve() if args.out else target.with_suffix(".png")
+            print(f"[*] Generating architecture PNG: {target.name} ...")
+            generate_schema_png(target, out_path)
+            print(f"[✓] Schema diagram → {out_path}")
+        else:
+            out_path = Path(args.out).resolve() if args.out else target.with_suffix(".svg")
+            print(f"[*] Visualizing schema for config: {target.name} ...")
+            # Reuse existing schema-level logic
+            nodes, subnets, cross_links, node_edges, edge_ports = parse_config_schema(target)
+            zone_rects, node_pos, cw, ch = compute_layout(subnets, nodes, cross_links)
+            svg = render(nodes, subnets, cross_links, node_edges, zone_rects, node_pos, cw, ch, edge_ports=edge_ports)
+            out_path.write_text(svg, encoding="utf-8")
+            print(f"[✓] Schema visualization → {out_path}")
+        return
 
     if args.recursive:
         print(f"[*] Scanning recursively for scenarios in {target} ...")

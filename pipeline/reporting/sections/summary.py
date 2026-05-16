@@ -1,5 +1,5 @@
 from datetime import datetime
-from ..latex_base import e, score_cmd
+from pipeline.reporting.latex_base import e, score_cmd
 
 def cover_page(title: str, entries: list, date_str: str) -> str:
     n_scenarios = len(entries)

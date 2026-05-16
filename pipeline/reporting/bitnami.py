@@ -23,6 +23,7 @@ import statistics
 import subprocess
 import sys
 from pathlib import Path
+from typing import Dict, List, Optional
 
 import matplotlib
 matplotlib.use("Agg")
@@ -85,9 +86,13 @@ def safe_pct(n, total):
 
 
 def latex_escape(s: str) -> str:
-    for ch, rep in [("_", r"\_"), ("&", r"\&"), ("%", r"\%"), ("#", r"\#"),
-                    ("$", r"\$"), ("{", r"\{"), ("}", r"\}"), ("~", r"\textasciitilde{}"),
-                    ("^", r"\textasciicircum{}"), ("\\", r"\textbackslash{}")]:
+    # Cast to string if it's a Path
+    s = str(s)
+    # Order matters: replace backslash first
+    for ch, rep in [("\\", r"\textbackslash{}"), ("_", r"\_"), ("&", r"\&"), 
+                    ("%", r"\%"), ("#", r"\#"), ("$", r"\$"), ("{", r"\{"), 
+                    ("}", r"\}"), ("~", r"\textasciitilde{}"),
+                    ("^", r"\textasciicircum{}")]:
         s = s.replace(ch, rep)
     return s
 
@@ -1432,6 +1437,34 @@ def compile_latex(tex_path: Path):
     if pdf.exists():
         print(f"  ✓  PDF generated: {pdf}")
     return pdf.exists()
+
+
+def build_section(out_dir: Optional[Path] = None) -> str:
+    """Public API for integrating Bitnami EDA into the executive report."""
+    # Use a temporary or default out_dir if none provided
+    work_dir = out_dir or Path("output/reports/eda_tmp")
+    figures_dir = work_dir / "figures" / "bitnami"
+    work_dir.mkdir(parents=True, exist_ok=True)
+    figures_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Load data
+    data_file = DATA_FILES["combined"]
+    if not data_file.exists():
+        return f"\\textbf{{[WARN] Bitnami combined dataset not found at {latex_escape(str(data_file))}}}"
+    
+    d = load_data(data_file)
+    s = compute_stats(d)
+
+    # 2. Load comparison stats if possible
+    all_stats = None
+    if all(p.exists() for p in DATA_FILES.values()):
+        all_stats = {k: compute_stats(load_data(p)) for k, p in DATA_FILES.items()}
+
+    # 3. Generate figures
+    generate_all_figures(s, figures_dir, all_stats=all_stats)
+
+    # 4. Return LaTeX fragment (the body of build_latex)
+    return _build_vulndb_section(all_stats or {"combined": s}, figures_dir)
 
 
 # ─── Main ─────────────────────────────────────────────────────────────────────

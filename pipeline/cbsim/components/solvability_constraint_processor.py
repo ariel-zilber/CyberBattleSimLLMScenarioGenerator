@@ -16,6 +16,7 @@ from cyberbattle.simulation.vulenrabilites import (
     CachedCredential, LeakedNodesId
 )
 from cyberbattle.simulation.rate import Rates
+from pipeline import constants as C
 
 
 class SolvabilityConstraintProcessor:
@@ -259,7 +260,7 @@ class SolvabilityConstraintProcessor:
             description=desc,
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=resolved_ids),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -394,7 +395,7 @@ class SolvabilityConstraintProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=cached_creds),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -422,7 +423,7 @@ class SolvabilityConstraintProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )

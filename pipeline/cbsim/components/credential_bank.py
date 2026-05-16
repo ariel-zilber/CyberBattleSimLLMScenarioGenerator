@@ -11,6 +11,7 @@
 
 from typing import Dict, List
 import random
+from pipeline import constants as C
 
 class CredentialBank:
     """

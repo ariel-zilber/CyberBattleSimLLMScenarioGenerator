@@ -1,6 +1,6 @@
 import shutil
 from pathlib import Path
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 PROMPT_FILES = [
     ("prompt_01_system_prompt.md",               "prompts/llm_prompts/system_prompt_v2.md"),

@@ -1,4 +1,4 @@
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 def services_credentials_section(entries: list) -> str:
     domain_data = []
@@ -59,6 +59,9 @@ def services_credentials_section(entries: list) -> str:
             "n_total": n_total,
             "leak_flows": leak_flows,
         })
+
+    if not domain_data:
+        return r"\newpage\subsection{Service Architecture}\textbf{[WARN] No domain data available for this section.}"
 
     svc_rows = []
     for d in domain_data:

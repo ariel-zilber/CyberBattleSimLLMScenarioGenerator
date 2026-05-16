@@ -11,7 +11,7 @@ to avoid the Python <3.12 restriction on backslashes inside f-string expressions
 
 import re as _re
 
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent specifications

@@ -398,6 +398,51 @@ class SolvabilityPostProcessor:
     # ENSURE ENTRY POINT ACCESS (FORCED — probability ignored)
     # =========================================================================
 
+    def _ensure_external_routing(self):
+        """
+        Ensure the 'start' node (External) can route to all internal subnets.
+        Fixes the 0% solve rate caused by disconnected subnets (Q38).
+        """
+        start_node = self.nodes.get('start')
+        if not start_node:
+            return
+
+        # 1. Collect all unique internal subnets
+        internal_subnets = set()
+        for nid, node in self.nodes.items():
+            if nid == 'start':
+                continue
+            ni_list = getattr(node, 'network_info', [])
+            for ni in ni_list:
+                subnet = getattr(ni, 'subnet', None)
+                if subnet:
+                    # networkx/Simulation subnet objects have a 'network' string
+                    net_str = getattr(subnet, 'network', str(subnet))
+                    if net_str and net_str != "0.0.0.0/0":
+                        internal_subnets.add(net_str)
+
+        if not internal_subnets:
+            return
+
+        # 2. Add outgoing wildcard rules to start node for each subnet
+        fw = getattr(start_node, 'firewall', None)
+        if not fw:
+            return
+
+        from cyberbattle.simulation.firewall import RulePermission, FirewallRule
+        from cyberbattle.simulation.model import Subnet
+
+        existing_nets = {r.subnet.network for r in fw.outgoing if hasattr(r.subnet, 'network')}
+        
+        for net_str in internal_subnets:
+            if net_str not in existing_nets:
+                fw.outgoing.append(FirewallRule(
+                    port="*",
+                    permission=RulePermission.ALLOW,
+                    subnet=Subnet(net_str)
+                ))
+                self.fixes_applied.append(f"Bridged subnet: External → {net_str}")
+
     def _ensure_entry_point_access(self):
         """Ensure the ACTUAL entry nodes (the ones start node targets) have
         remote access + discovery + credential leak vulns. Uses entry_node_ids
@@ -739,7 +784,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -778,7 +823,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_cached),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -813,7 +858,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=discovered),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -844,7 +889,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=outcome,
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )
@@ -898,7 +943,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_creds),
-            reward_string=tmpl['reward'],
+            reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
         )

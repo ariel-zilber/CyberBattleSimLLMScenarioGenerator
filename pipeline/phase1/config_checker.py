@@ -58,9 +58,11 @@ _PIPELINE_DIR = Path(__file__).resolve().parent.parent
 _REPO_ROOT = _PIPELINE_DIR.parent
 CATALOG_PATH = _REPO_ROOT / "prompts" / "reference" / "vulnerability_catalog.md"
 
-sys.path.insert(0, str(_PIPELINE_DIR))
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 try:
-    from constants import AGENT_CATEGORY_ALLOWLIST  # noqa: E402
+    from pipeline.constants import AGENT_CATEGORY_ALLOWLIST  # noqa: E402
 except ImportError:
     AGENT_CATEGORY_ALLOWLIST: dict = {}  # type: ignore[assignment]
 
@@ -295,7 +297,8 @@ def check_attack_flow_depth(cfg: dict) -> Tuple[List[str], dict]:
 
     # Infer entry service types: appear as source but not as any target
     all_targets  = {t for rule in attack_flow for t in rule.get("targets", [])}
-    all_sources  = {rule["source_pattern"] for rule in attack_flow}
+    all_sources  = {rule.get("source_pattern", "") for rule in attack_flow if "source_pattern" in rule}
+    all_sources.discard("")
     # Entry services: appear as source but never as target, AND are not goal nodes
     # (goal nodes that also appear as sources are intermediate+goal, not entry)
     entry_svcs = (all_sources - all_targets) - set(goal_services)
@@ -305,7 +308,11 @@ def check_attack_flow_depth(cfg: dict) -> Tuple[List[str], dict]:
         entry_svcs = all_sources - all_targets
     if not entry_svcs:
         # Fallback: use the first source in the list
-        entry_svcs = {attack_flow[0]["source_pattern"]}
+        first_rule = attack_flow[0]
+        if "source_pattern" in first_rule:
+            entry_svcs = {first_rule["source_pattern"]}
+        else:
+            entry_svcs = set()
         issues.append(
             f"Could not infer entry service — all sources are also targets. "
             f"Using '{list(entry_svcs)[0]}' as start."

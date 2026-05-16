@@ -1,5 +1,5 @@
 from pathlib import Path
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 from ..visual_utils import (
     save_attack_path_figure,
     save_action_type_figure,

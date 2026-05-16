@@ -21,16 +21,15 @@ import json
 import networkx as nx
 from pathlib import Path
 from collections import Counter, deque
+# Add repo root to sys.path so we can import 'pipeline' package
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 from pipeline import constants as C
 
-# Add repo root and pipeline/ to sys.path
-REPO_ROOT    = Path(__file__).resolve().parent.parent
-_PIPELINE_DIR = Path(__file__).resolve().parent.parent  # pipeline/
-sys.path.append(str(REPO_ROOT))
-sys.path.insert(0, str(_PIPELINE_DIR))
-
 try:
-    from constants import AGENT_CATEGORY_ALLOWLIST as _AGENT_ALLOWLIST  # noqa: E402
+    from pipeline.constants import AGENT_CATEGORY_ALLOWLIST as _AGENT_ALLOWLIST  # noqa: E402
 except ImportError:
     _AGENT_ALLOWLIST: dict = {}  # type: ignore[assignment]
 

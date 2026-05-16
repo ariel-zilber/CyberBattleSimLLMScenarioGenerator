@@ -49,35 +49,40 @@ try:
 except ImportError:
     _HAS_SCHEMA_GEN = False
 
+# Ensure repo root is in path for consolidated packages
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 # ── Section imports ──────────────────────────────────────────────────────────
-from reporting.sections.summary    import cover_page                        # noqa: E402
-from reporting.sections.scenarios  import scenario_pages                   # noqa: E402
-from reporting.sections.topology   import (                                 # noqa: E402
+from pipeline.reporting.sections.summary    import cover_page                        # noqa: E402
+from pipeline.reporting.sections.scenarios  import scenario_pages                   # noqa: E402
+from pipeline.reporting.sections.topology   import (                                 # noqa: E402
     outcomes_and_topology_section,
     diversity_metrics_section,
 )
-from reporting.sections.attack_paths import (                               # noqa: E402
+from pipeline.reporting.sections.attack_paths import (                               # noqa: E402
     attack_path_section,
     graph_statistics_section,
 )
-from reporting.sections.critic     import llm_critic_section               # noqa: E402
-from reporting.sections.appendices import (                                 # noqa: E402
+from pipeline.reporting.sections.critic     import llm_critic_section               # noqa: E402
+from pipeline.reporting.sections.appendices import (                                 # noqa: E402
     quality_appendix,
     methodology_appendix,
     formulas_appendix,
     reproducibility_sys_section,
 )
-from reporting.sections.vulnerability import properties_vulns_section      # noqa: E402
-from reporting.sections.services     import services_credentials_section   # noqa: E402
-from reporting.sections.ablation     import ablation_section               # noqa: E402
-from reporting.sections.discussion   import discussion_section             # noqa: E402
-from reporting.sections.prompts      import llm_generation_prompt_appendix  # noqa: E402
-from reporting.sections.critic       import critic_prompt_appendix          # noqa: E402
-from reporting.sections.eda          import cve_eda_section                 # noqa: E402
-from reporting.sections.agent_design import agent_design_section             # noqa: E402
+from pipeline.reporting.sections.vulnerability import properties_vulns_section      # noqa: E402
+from pipeline.reporting.sections.services     import services_credentials_section   # noqa: E402
+from pipeline.reporting.sections.ablation     import ablation_section               # noqa: E402
+from pipeline.reporting.sections.discussion   import discussion_section             # noqa: E402
+from pipeline.reporting.sections.prompts      import llm_generation_prompt_appendix  # noqa: E402
+from pipeline.reporting.sections.critic       import critic_prompt_appendix          # noqa: E402
+from pipeline.reporting.sections.eda          import cve_eda_section                 # noqa: E402
+from pipeline.reporting.sections.agent_design import agent_design_section             # noqa: E402
 
 try:
-    from quality_evaluator import ScenarioQualityEvaluator         # noqa: E402
+    from pipeline.quality_evaluator import ScenarioQualityEvaluator         # noqa: E402
     _HAS_EVALUATOR = True
 except ImportError:
     _HAS_EVALUATOR = False
@@ -487,7 +492,7 @@ def build_entries(phase2_root: Path, configs_roots: list, fast: bool = False) ->
 
     scenario_dirs = sorted(
         d for d in phase2_root.iterdir()
-        if d.is_dir() and (d / "stratified_manifest.json").exists()
+        if d.is_dir() and (d / "manifest.json").exists()
     )
     if not scenario_dirs:
         print(f"No scenarios found under {phase2_root}")
@@ -1070,6 +1075,7 @@ def main() -> None:
         configs_root,
         *[Path(p) for p in (args.extra_configs or [])],
         _repo_root / "data",
+        _repo_root / "data" / "scenarios",
         _repo_root / "prompts" / "examples",
     ]
 

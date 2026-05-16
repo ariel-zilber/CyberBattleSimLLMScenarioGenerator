@@ -10,7 +10,7 @@ Generates 4 matplotlib figures:
   4. Match-property coverage heatmap + CVE grounding dashboard
 
 Usage:
-    from tools.cve_scenario_graphs import generate_cve_graphs
+    # from pipeline.reporting.cve_scenario_graphs import generate_cve_graphs
     paths = generate_cve_graphs(eval_result, out_dir=Path("figures/"))
 """
 from __future__ import annotations

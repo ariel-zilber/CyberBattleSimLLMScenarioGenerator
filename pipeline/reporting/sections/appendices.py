@@ -1,6 +1,6 @@
 import shutil
 from pathlib import Path
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 
 def quality_appendix() -> str:

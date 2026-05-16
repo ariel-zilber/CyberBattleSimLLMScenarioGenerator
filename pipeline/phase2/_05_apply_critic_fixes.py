@@ -687,9 +687,9 @@ def repair_config(
     import subprocess as _sp
     _checker_ok = True
     for _vcmd in [
-        [sys.executable, str(_PIPELINE_DIR / "phase1" / "02_config_checker.py"),
+        [sys.executable, str(_PIPELINE_DIR / "phase1" / "config_checker.py"),
          str(output_path), "--strict"],
-        [sys.executable, str(_PIPELINE_DIR / "phase1" / "03_validate_zone_coverage.py"),
+        [sys.executable, str(_PIPELINE_DIR / "phase1" / "validate_zone_coverage.py"),
          str(output_path)],
     ]:
         _vr = _sp.run(_vcmd, capture_output=True, text=True, cwd=str(REPO_ROOT))

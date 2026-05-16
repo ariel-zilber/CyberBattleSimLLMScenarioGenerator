@@ -1,4 +1,4 @@
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 def ablation_section(entries: list) -> str:
     repair_data = []

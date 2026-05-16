@@ -1,6 +1,6 @@
 import shutil
 from pathlib import Path
-from ..latex_base import e, slug, score_cmd
+from pipeline.reporting.latex_base import e, slug, score_cmd
 from ..data_utils import stats_table, copy_png_capped
 from ..visual_utils import save_quality_bars, save_solve_donut
 

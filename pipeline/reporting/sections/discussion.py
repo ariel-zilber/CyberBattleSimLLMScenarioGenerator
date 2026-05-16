@@ -1,4 +1,4 @@
-from ..latex_base import e
+from pipeline.reporting.latex_base import e
 
 def discussion_section() -> str:
     return r"""
