@@ -22,6 +22,7 @@ from cyberbattle.simulation.vulenrabilites import (
     PrivilegeEscalation, LeakedNodesId, PrivilegeLevel
 )
 from cyberbattle.simulation.rate import Rates
+from pipeline import constants as C
 
 
 def _collect_planned_vuln_names(config: dict) -> set:
