@@ -197,6 +197,43 @@ class SolvabilityPostProcessor:
     # FIREWALL HELPER — ensures movement paths are open
     # =========================================================================
 
+    def _prune_orphaned_identifiers(self):
+        """Automatically remove properties declared in identifiers but never used (Q25)."""
+        id_config = self.config.get('identifiers', {})
+        base_props = id_config.get('base_properties', [])
+        if not base_props:
+            return
+
+        used_props: set[str] = set()
+        
+        # 1. Check Services
+        services = self.config.get('services', {})
+        for svc in services.values():
+            used_props.update(svc.get('default_properties', []))
+            
+        # 2. Check Domains/Groups
+        for domain in self.config.get('domains', []):
+            for group in domain.get('groups', []):
+                used_props.update(group.get('properties', []))
+                
+        # 3. Check Vulnerabilities (Planned)
+        for category in ['remote_access', 'credential_leak', 'discovery', 'goal_access', 'lateral_movement']:
+            vulns = self.config.get('solvability_vulnerabilities', {}).get(category, [])
+            if isinstance(vulns, list):
+                for v in vulns:
+                    used_props.update(v.get('match_properties', []))
+        
+        # 4. Check Start Node
+        used_props.update(self.config.get('start_node', {}).get('properties', []))
+
+        # Identify orphans
+        orphans = [p for p in base_props if p not in used_props and p != 'breach_node']
+        
+        if orphans:
+            new_props = [p for p in base_props if p not in orphans]
+            id_config['base_properties'] = new_props
+            self.fixes_applied.append(f"Pruned {len(orphans)} orphaned properties: {orphans}")
+
     def _open_firewall_for_cred(self, src_id: str, dst_id: str):
         """Add bidirectional firewall rules so src can reach dst via its services.
 
