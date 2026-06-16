@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-tools/test_dynamic_solvability.py
-=================================
-Validates dynamic solvability by deploying a Swarm of Cooperative Heuristic Agents.
-Outputs individual scenario LLM prompts AND aggregates all run metrics (including
-deep graph/topology math and firewall-inferred routing edges) into a dataset JSON.
+pipeline/phase2/test_env_integration.py
+========================================
+Validates dynamic solvability by deploying a swarm of cooperative heuristic agents.
+Aggregates per-scenario run_metrics.json and computes graph/topology metrics.
+Agent action space can be restricted to a specialist's allowed categories via --agent-type (D-P1).
 
 Usage:
 ------
-python3 tools/test_dynamic_solvability.py --data-dir /content/drive/MyDrive/thesis/code/datasets/poc/claude/phase2/active_directory --num-agents 5 --episodes 5
+python3 pipeline/phase2/test_env_integration.py --data-dir <scenarios_dir> --num-agents 3 --episodes 3
+python3 pipeline/phase2/test_env_integration.py --data-dir <scenarios_dir> --agent-type S_Windows --config data/swin_v1.yaml
 """
 
 import argparse
@@ -1458,6 +1459,11 @@ def main():
                             name = entry.get("name") if isinstance(entry, dict) else None
                             if name:
                                 allowed_vuln_names.add(name)
+                # start_node vulns are entry-mechanism exploits — always allowed regardless of category
+                for vuln in cfg.get("start_node", {}).get("vulnerabilities", {}).values():
+                    name = vuln.get("name") if isinstance(vuln, dict) else None
+                    if name:
+                        allowed_vuln_names.add(name)
                 if allowed_vuln_names:
                     print(f"  [D-P1] BFS restricted to {len(allowed_vuln_names)} vulns "
                           f"for agent '{args.agent_type}' "

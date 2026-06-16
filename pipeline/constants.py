@@ -76,11 +76,11 @@ SOLVABILITY_PROB_RANGE: tuple[float, float] = (0.40, 0.55)
 # ── Agent-category allowlist (used by config_checker.py) ──────────────────
 
 AGENT_CATEGORY_ALLOWLIST: dict[str, list[str]] = {
-    "S_Network":  ["remote_access", "credential_leak"],
-    "S_Linux":    ["remote_access", "credential_leak"],
-    "S_Windows":  ["remote_access"],
-    "S_Identity": ["remote_access", "goal_access"],
-    "S_Lateral":  ["lateral_movement", "credential_leak"],
+    "S_Network":  ["remote_access", "credential_leak", "discovery"],
+    "S_Linux":    ["remote_access", "credential_leak", "discovery", "goal_access"],
+    "S_Windows":  ["remote_access", "credential_leak", "discovery", "goal_access"],
+    "S_Identity": ["remote_access", "goal_access", "credential_leak"],
+    "S_Lateral":  ["lateral_movement", "credential_leak", "discovery"],
     "Meta":       ["remote_access", "credential_leak", "lateral_movement",
                    "discovery", "goal_access"],
 }

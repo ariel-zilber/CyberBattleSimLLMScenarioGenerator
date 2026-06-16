@@ -404,54 +404,123 @@ def check_vulnerability_coverage(cfg: dict) -> List[str]:
 # Check 4b — Agent-category allowlist (D-A5)
 # ---------------------------------------------------------------------------
 
-def check_agent_category_allowlist(cfg: dict, catalog: Optional[Dict[str, Set[str]]] = None) -> List[str]:
-    """Validate that every solvability category and technique belongs to the agent's allowlist
-    and the canonical catalog sections.
-    """
-    issues = []
-    agent = cfg.get("metadata", {}).get("agent", "")
-    if not agent:
-        return []
+def check_metadata(cfg: dict) -> List[str]:
+    """Enforce that every config carries a complete ``metadata`` block.
 
-    permitted = AGENT_CATEGORY_ALLOWLIST.get(agent) if AGENT_CATEGORY_ALLOWLIST else None
-    if permitted is None and AGENT_CATEGORY_ALLOWLIST:
+    Required fields (per CLAUDE.md and AP-022): ``scenario_id``, ``agent``,
+    ``zones``, ``node_range``, ``terminal_goal``. ``agent`` must be one of the
+    canonical specialist codenames. ``terminal_goal`` may be a string (single
+    goal) or a list (multi-goal redundancy / shared_goal_names form) but it
+    must reference at least one ``is_goal: true`` service.
+    """
+    issues: List[str] = []
+    meta = cfg.get("metadata")
+    if not meta or not isinstance(meta, dict):
         issues.append(
-            f"metadata.agent '{agent}' is not in the AGENT_CATEGORY_ALLOWLIST "
-            f"(known agents: {', '.join(AGENT_CATEGORY_ALLOWLIST)})"
+            "metadata block is missing — required at the top of every YAML "
+            "(see AP-022). Must include scenario_id, agent, zones, node_range, "
+            "terminal_goal."
         )
         return issues
 
-    permitted_set = set(permitted) if permitted else set()
+    REQUIRED = ("scenario_id", "agent", "zones", "node_range", "terminal_goal")
+    for key in REQUIRED:
+        if key not in meta or meta.get(key) in (None, "", [], {}):
+            issues.append(f"metadata.{key} is missing or empty (required)")
+
+    # Validate agent codename
+    KNOWN_AGENTS = {"S_Network", "S_Linux", "S_Windows", "S_Identity", "S_Lateral", "Meta"}
+    if meta.get("agent") and meta["agent"] not in KNOWN_AGENTS:
+        issues.append(
+            f"metadata.agent='{meta['agent']}' is not a recognised codename "
+            f"(allowed: {sorted(KNOWN_AGENTS)})"
+        )
+
+    # zones must be a list
+    if "zones" in meta and not isinstance(meta["zones"], list):
+        issues.append("metadata.zones must be a list (e.g. [Z6_AppTier, Z6_DataTier])")
+
+    # node_range must be a 2-element [min, max] list
+    nr = meta.get("node_range")
+    if nr is not None:
+        if not isinstance(nr, list) or len(nr) != 2 or not all(isinstance(x, (int, float)) for x in nr):
+            issues.append("metadata.node_range must be a [min, max] integer list")
+
+    # terminal_goal must reference an is_goal: true service (AP-023)
+    services = cfg.get("services", {}) or {}
+    goal_service_names = {name for name, s in services.items() if isinstance(s, dict) and s.get("is_goal") is True}
+    tg = meta.get("terminal_goal")
+    if tg is not None:
+        tg_list = tg if isinstance(tg, list) else [tg]
+        for name in tg_list:
+            if name not in goal_service_names:
+                issues.append(
+                    f"metadata.terminal_goal references '{name}' but no service "
+                    f"with is_goal: true matches (declared goal services: "
+                    f"{sorted(goal_service_names) or 'none'}) — AP-023"
+                )
+
+    return issues
+
+
+def check_agent_category_allowlist(cfg: dict, catalog: Optional[Dict[str, Set[str]]] = None) -> List[str]:
+    """Validate that every Solvability.* technique referenced in the YAML belongs
+    to the canonical vulnerability_catalog.md, and (when metadata.agent is set)
+    that the category itself is permitted for that agent.
+
+    Catalog membership is enforced unconditionally — invented or hallucinated
+    Solvability.* names are a hard error regardless of whether the YAML carries
+    a metadata.agent field.
+    """
+    issues = []
+    agent = cfg.get("metadata", {}).get("agent", "")
+
+    permitted_set: Set[str] = set()
+    if agent:
+        permitted = AGENT_CATEGORY_ALLOWLIST.get(agent) if AGENT_CATEGORY_ALLOWLIST else None
+        if permitted is None and AGENT_CATEGORY_ALLOWLIST:
+            issues.append(
+                f"metadata.agent '{agent}' is not in the AGENT_CATEGORY_ALLOWLIST "
+                f"(known agents: {', '.join(AGENT_CATEGORY_ALLOWLIST)})"
+            )
+            return issues
+        permitted_set = set(permitted) if permitted else set()
+
     solv = cfg.get("solvability_vulnerabilities", {})
     for category, vulns in solv.items():
         if not isinstance(vulns, list) or not vulns:
             continue
 
-        # 1. Check if category is allowed for this agent
-        if AGENT_CATEGORY_ALLOWLIST and category not in permitted_set:
+        # 1. (Agent-aware) Check if category is allowed for this agent
+        if agent and AGENT_CATEGORY_ALLOWLIST and category not in permitted_set:
             issues.append(
                 f"Agent '{agent}' is not permitted to use solvability category "
                 f"'{category}' (allowed: {sorted(permitted_set)})"
             )
 
-        # 2. Check if techniques in this category are canonically valid (Q6)
+        # 2. (Unconditional) Check that each Solvability.* technique is canonical.
+        #    Runs whether or not metadata.agent is set — invented vuln names are
+        #    a hard error in either case.
         if catalog and category in catalog:
             valid_techniques = catalog[category]
             for v in vulns:
                 vname = v.get("name", "")
-                if vname and vname not in valid_techniques:
-                    # Check if it exists in ANOTHER category (hallucinated category pairing)
-                    other_cats = [cat for cat, techs in catalog.items() if vname in techs]
-                    if other_cats:
-                        issues.append(
-                            f"Technique '{vname}' is in category '{category}' but canonically "
-                            f"belongs to {other_cats} — incorrect category pairing"
-                        )
-                    else:
-                        issues.append(
-                            f"Technique '{vname}' in category '{category}' is not in the "
-                            f"canonical vulnerability_catalog.md"
-                        )
+                if not vname or not vname.startswith("Solvability."):
+                    continue
+                if vname in valid_techniques:
+                    continue
+                # Look for the name in any other category (hallucinated pairing)
+                other_cats = [cat for cat, techs in catalog.items() if vname in techs]
+                if other_cats:
+                    issues.append(
+                        f"Technique '{vname}' is in category '{category}' but canonically "
+                        f"belongs to {other_cats} — incorrect category pairing"
+                    )
+                else:
+                    issues.append(
+                        f"Technique '{vname}' in category '{category}' is not in the "
+                        f"canonical vulnerability_catalog.md — invented or off-catalog name"
+                    )
     return issues
 
 
@@ -625,6 +694,7 @@ def main():
 
     # ---- Run all checks ----
     checks = [
+        ("Metadata block",             check_metadata(cfg)),
         ("Config settings",            check_config_settings(cfg)),
         ("Identifiers completeness",   check_identifiers(cfg)),
         ("Service / group consistency", check_groups(cfg)),
@@ -637,7 +707,8 @@ def main():
     # Categorise: unreachable / depth<2 = error; everything else = warning (some are errors)
     ERROR_KEYWORDS = ["UNREACHABLE", "unsolvable", "not defined", "not in identifiers",
                       "is missing", "must be", "breach_node", "incorrect category pairing",
-                      "vulnerability_catalog.md", "orphaned property"]
+                      "vulnerability_catalog.md", "orphaned property",
+                      "metadata block", "metadata.", "AP-022", "AP-023"]
     for check_name, issues in checks:
         for issue in issues:
             if any(k.lower() in issue.lower() for k in ERROR_KEYWORDS):

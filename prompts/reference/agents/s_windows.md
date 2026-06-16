@@ -1,136 +1,193 @@
-# Agent 3: S_Windows — OS Exploitation Specialist
+# S_Windows - Windows OS and Application Exploitation Specialist
 
-**Zones:** Z1 HQ VLANs + Z1 Server Farm  
-**CVE source:** `windows_cves.json` (OS exploitation + initial access subset)  
-**Terminal goal (standalone):** `DomainController` (value 10000, is_goal: true)
+This file is the authoritative prompt reference for `s_windows` scenario generation.
+It is aligned to `/home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml`.
 
-**Scope:** S_Windows specializes strictly in **OS-level and application-level memory/logic flaws**. Its policy maps `(Windows version, service) → specific RCE exploit`. It does not touch Kerberos, NTLM relay, or any AD protocol — those belong to S_Identity.
+## Role
 
----
+Exploit Windows operating-system, IIS, Exchange, SMB/RDP, MSMQ, Hyper-V, and workstation/server vulnerabilities.
 
-## Action Types
+Domain boundary: Windows workstations, Windows servers, SMB, RDP, IIS, Exchange, MSSQL, Hyper-V, MSMQ, file and print servers.
 
-| CBS Action Category | type | Allowed? | Rationale |
-|--------------------|------|----------|-----------|
-| `probe` vulnerabilities | REMOTE | ✅ Yes | Windows version fingerprinting before CVE selection |
-| `remote_access` solvability | REMOTE | ✅ Yes | OS/application RCEs: EternalBlue, BlueKeep, ProxyLogon |
-| `remote_access` solvability | LOCAL | ✅ Yes | Local privilege escalation after initial RCE |
-| `credential_leak` solvability | — | ❌ No | S_Lateral owns post-exploitation credential extraction (Mimikatz, LAPS) and relay |
-| `discovery` solvability | — | ❌ No | S_Lateral |
-| `goal_access` solvability | — | ❌ No | DCSync belongs to S_Identity |
+Training scenarios for this specialist must be specialist-style fixed-pair compatible scenarios. In meta scenarios, the same collections define the specialist's usable action and observation surface.
 
----
+## Fixed Action Collection
 
-## Vulnerabilities
+The specialist has exactly 50 actions:
 
-### Probe Vulnerabilities (type: REMOTE, SR 1.0)
-| Name | OS Target |
-|------|-----------|
-| `Remote.Probe.Windows` | Windows (any) |
-| `Remote.Probe.WindowsServer` | Windows Server (banner version) |
+| Action kind | Count |
+|---|---:|
+| Local vulnerabilities | 12 |
+| Remote vulnerabilities | 21 |
+| Connect ports | 17 |
+| Total | 50 |
 
-### Remote Access Vulnerabilities (type: REMOTE)
-| Name | CVE | CVSS | SR | Service | Attack |
-|------|-----|------|----|---------|--------|
-| `Solvability.SMBGhost` | CVE-2020-0796 | 10.0 | 0.90 | FileServer, MSSQLServer | SMBv3 compression RCE (Win10 1903/1909) |
-| `Solvability.MS08_067` | CVE-2008-4250 | 10.0 | 0.90 | FileServer | Server service RCE (WinXP/2003/2008) |
-| `Solvability.SIGRed` | CVE-2020-1350 | 10.0 | 0.90 | DomainController | Windows DNS Server RCE via worm-capable vuln |
-| `Solvability.HyperV_RCE` | CVE-2021-28476 | 9.9 | 0.90 | HyperVHost | Hyper-V guest→host RCE |
-| `Solvability.BlueKeep` | CVE-2019-0708 | 9.8 | 0.90 | SalesWorkstation, AdminWorkstation | Pre-auth RDP RCE (Win7/2008) |
-| `Solvability.DejaBlue` | CVE-2019-1182 | 9.8 | 0.90 | SalesWorkstation | RDP RCE variant (Win8.1/2012R2+) |
-| `Solvability.RDP_RCE_1226` | CVE-2019-1226 | 9.8 | 0.90 | AdminWorkstation | RDP RCE (Win10/Server 2019) |
-| `Solvability.IIS_HTTP_Stack` | CVE-2021-31166 | 9.8 | 0.90 | IISServer | HTTP.sys RCE (Win10/Server 2019) |
-| `Solvability.IIS_RCE` | CVE-2022-21907 | 9.8 | 0.90 | IISServer | HTTP Protocol Stack RCE |
-| `Solvability.Exchange_NTLM_Relay` | CVE-2024-21410 | 9.8 | 0.90 | ExchangeServer | Exchange Server NTLM relay → EoP/RCE (outcome is OS-level code execution; contrast S_Identity `NTLM_Relay_LDAP` whose outcome is AD attribute mutation) |
-| `Solvability.TCPIP_RCE_1` | CVE-2021-24074 | 9.8 | 0.90 | FileServer | Windows TCP/IP RCE via IPv4 source routing |
-| `Solvability.TCPIP_RCE_2` | CVE-2021-24094 | 9.8 | 0.90 | FileServer | Windows TCP/IP RCE via IPv6 |
-| `Solvability.NFS_RCE_TCPIP` | CVE-2022-34715 | 9.8 | 0.90 | FileServer | Windows NFS RCE (TCP/IP stack) |
-| `Solvability.HTTP3_RCE` | CVE-2023-23392 | 9.8 | 0.90 | IISServer | HTTP/3 Protocol Stack RCE |
-| `Solvability.DNS_RCE_1` | CVE-2021-26897 | 9.8 | 0.90 | DomainController | Windows DNS Server zone-signing RCE |
-| `Solvability.RPC_RCE_2` | CVE-2022-26809 | 9.8 | 0.90 | DomainController, FileServer | RPC Runtime RCE via MS-RPCE |
-| `Solvability.WSD_RCE` | CVE-2023-28250 | 9.8 | 0.90 | FileServer | Windows Web Services Discovery RCE |
-| `Solvability.iSCSI_RCE` | CVE-2023-21803 | 9.8 | 0.90 | FileServer | iSCSI Discovery Service RCE |
-| `Solvability.RDP_Gateway_RCE_1` | CVE-2020-0609 | 9.8 | 0.90 | RDGateway | RD Gateway pre-auth RCE |
-| `Solvability.RDP_Gateway_RCE_2` | CVE-2020-0610 | 9.8 | 0.90 | RDGateway | RD Gateway pre-auth RCE variant |
-| `Solvability.Exchange_RCE_2018_1` | CVE-2018-8154 | 9.8 | 0.90 | ExchangeServer | Exchange Server RCE |
-| `Solvability.Exchange_RCE_2018_2` | CVE-2018-8302 | 9.8 | 0.90 | ExchangeServer | Exchange RCE via memory corruption |
-| `Solvability.Exchange_RCE_2019` | CVE-2019-0586 | 9.8 | 0.90 | ExchangeServer | Exchange RCE via crafted email |
-| `Solvability.MSSQL_BufferOverflow` | CVE-2018-8273 | 9.8 | 0.90 | MSSQLServer | SQL Server buffer overflow RCE |
-| `Solvability.DNS_UAF_2016` | CVE-2016-3227 | 9.8 | 0.90 | DomainController | DNS Server use-after-free RCE |
-| `Solvability.DNS_WinSearch_RCE` | CVE-2017-11771 | 9.8 | 0.90 | DomainController | Windows Search RCE via DNS |
-| `Solvability.DNS_RCE_2018` | CVE-2018-8626 | 9.8 | 0.90 | DomainController | DNS Server heap OOB RCE |
-| `Solvability.HyperV_RCE_2016` | CVE-2016-0088 | 9.3 | 0.90 | HyperVHost | Hyper-V guest→host RCE (Server 2012R2) |
-| `Solvability.ProxyShell` | CVE-2021-34473 | 9.1 | 0.90 | ExchangeServer | Exchange URL normalization bypass → RCE |
-| `Solvability.ProxyLogon` | CVE-2021-26855 | 9.1 | 0.90 | ExchangeServer | Exchange pre-auth SSRF → RCE |
-| `Solvability.HyperV_RCE_2019` | CVE-2019-0719 | 9.1 | 0.90 | HyperVHost | Hyper-V guest→host RCE (Server 2019) |
+### Local Vulnerabilities
 
-### Local Access Vulnerabilities (type: LOCAL — require owning the node first)
-| Name | CVE | SR | Service | Attack |
-|------|-----|----|---------|--------|
-| `Solvability.SeImpersonatePrivEsc` | AD technique | 0.75 | All Windows nodes | Token impersonation → SYSTEM (JuicyPotato/RoguePotato) |
-| `Solvability.AlwaysInstallElevated` | Misconfiguration | 0.70 | SalesWorkstation | MSI installer privilege escalation |
-| `Solvability.UnquotedServicePath` | Misconfiguration | 0.65 | All Windows nodes | Unquoted service path hijack → SYSTEM |
-| `Solvability.DLLHijacking_Windows` | Misconfiguration | 0.62 | AdminWorkstation | DLL search order hijack in writable path |
-| `Solvability.Schtasks_EOP_1` | CVE-2019-1069 | 0.72 | All Windows nodes | Task Scheduler junction point → SYSTEM |
-| `Solvability.Schtasks_EOP_2` | CVE-2019-1170 | 0.72 | All Windows nodes | Task Scheduler XML parser arbitrary write → SYSTEM |
-| `Solvability.Schtasks_EOP_3` | CVE-2022-21960 | 0.72 | All Windows nodes | Task Scheduler DLL hijack → SYSTEM |
-| `Solvability.Schtasks_EOP_4` | CVE-2023-21541 | 0.72 | All Windows nodes | Task Scheduler COM access control EoP → SYSTEM |
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.SeImpersonatePrivEsc` |
+| 1 | `Solvability.AlwaysInstallElevated` |
+| 2 | `Solvability.UnquotedServicePath` |
+| 3 | `Solvability.DLLHijacking_Windows` |
+| 4 | `Solvability.Schtasks_EOP_1` |
+| 5 | `Solvability.Schtasks_EOP_2` |
+| 6 | `Solvability.Schtasks_EOP_3` |
+| 7 | `Solvability.Schtasks_EOP_4` |
+| 8 | `Solvability.Mimikatz_NTLM` |
+| 9 | `Solvability.SAM_Dump` |
+| 10 | `Solvability.LSA_Secrets` |
+| 11 | `Solvability.HiveNightmare` |
 
-### Initial Access Vulnerabilities — Office / Document (type: REMOTE — user-interaction)
-| Name | CVE | CVSS | SR | Service | Attack |
-|------|-----|------|----|---------|--------|
-| `Solvability.Follina` | CVE-2022-30190 | 7.8 | 0.75 | SalesWorkstation, AdminWorkstation | MSDT RCE via malicious Office document (no macros) |
-| `Solvability.OfficeHTML_RCE` | CVE-2023-36884 | 8.3 | 0.78 | SalesWorkstation, FinanceWorkstation | Office HTML RCE bypassing Mark-of-the-Web |
-| `Solvability.Outlook_Moniker` | CVE-2024-21413 | 9.8 | 0.88 | AdminWorkstation | Outlook Moniker Link RCE (no user interaction) |
-| `Solvability.Office_RCE_1` | CVE-2022-21840 | 8.8 | 0.78 | SalesWorkstation | Office memory corruption RCE via crafted doc |
-| `Solvability.Word_RCE` | CVE-2022-41031 | 7.8 | 0.72 | SalesWorkstation, FinanceWorkstation | Word memory handling RCE via crafted .docx |
+### Remote Vulnerabilities
 
-### Initial Access Vulnerabilities — Netlogon OS Authentication (type: REMOTE)
-| Name | CVE | CVSS | SR | Service | Attack |
-|------|-----|------|----|---------|--------|
-| `Solvability.Netlogon_EOP_1` | CVE-2022-38023 | 8.1 | 0.70 | DomainController | Netlogon session key brute-force → domain auth bypass |
-| `Solvability.Netlogon_InfDisc` | CVE-2023-21526 | 7.4 | 0.65 | DomainController | Netlogon session key leak → forge domain requests |
-| `Solvability.Netlogon_Vuln` | CVE-2023-21728 | 7.5 | 0.68 | DomainController | Netlogon service crash → domain authentication DoS |
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.SMBGhost` |
+| 1 | `Solvability.MS08_067` |
+| 2 | `Solvability.SIGRed` |
+| 3 | `Solvability.BlueKeep` |
+| 4 | `Solvability.DejaBlue` |
+| 5 | `Solvability.RDP_RCE_1226` |
+| 6 | `Solvability.IIS_HTTP_Stack` |
+| 7 | `Solvability.IIS_RCE` |
+| 8 | `Solvability.TCPIP_RCE_1` |
+| 9 | `Solvability.TCPIP_RCE_2` |
+| 10 | `Solvability.NFS_RCE_TCPIP` |
+| 11 | `Solvability.HTTP3_RCE` |
+| 12 | `Solvability.DNS_RCE_1` |
+| 13 | `Solvability.RPC_RCE_2` |
+| 14 | `Solvability.WSD_RCE` |
+| 15 | `Solvability.iSCSI_RCE` |
+| 16 | `Solvability.ProxyShell` |
+| 17 | `Solvability.ProxyLogon` |
+| 18 | `Solvability.QueueJumper` |
+| 19 | `Solvability.HyperV_RCE` |
+| 20 | `Solvability.Follina` |
 
-### Initial Access Vulnerabilities — MSMQ (type: REMOTE — port 1801/TCP)
-| Name | CVE | CVSS | SR | Service | Attack |
-|------|-----|------|----|---------|--------|
-| `Solvability.QueueJumper` | CVE-2023-21554 | 9.8 | 0.88 | MSMQServer | MSMQ unauthenticated SYSTEM RCE via port 1801 |
-| `Solvability.MSMQ_RCE_2` | CVE-2023-35309 | 8.8 | 0.78 | MSMQServer | MSMQ heap overflow RCE from adjacent network |
-| `Solvability.MSMQ_RCE_4` | CVE-2024-30080 | 9.8 | 0.88 | MSMQServer | MSMQ use-after-free unauthenticated SYSTEM RCE |
+### Connect Ports
 
----
+| Slot | Identifier |
+|---:|---|
+| 0 | `HTTP` |
+| 1 | `HTTPS` |
+| 2 | `SMB` |
+| 3 | `RDP` |
+| 4 | `WinRM` |
+| 5 | `FTP` |
+| 6 | `SMTP` |
+| 7 | `DNS` |
+| 8 | `MSSQL` |
+| 9 | `MySQL` |
+| 10 | `PostgreSQL` |
+| 11 | `VNC` |
+| 12 | `Telnet` |
+| 13 | `SNMP` |
+| 14 | `NetBIOS` |
+| 15 | `Kerberos` |
+| 16 | `WMI` |
 
-## Services and Ports
+## Observation Context Collection
 
-| Service | Primary Ports | Protocol | OS | GLOBALTECH Zone |
-|---------|--------------|----------|----|----------------|
-| `DomainController` | 88, 389, 636, 445, 3268, 53 | Kerberos, LDAP, SMB, DNS | Win Server 2019/2022 | Z1 Server Farm |
-| `MSSQLServer` | 1433, 445 | MSSQL, SMB | Win Server 2019 | Z1 Server Farm |
-| `FileServer` | 445, 139 | SMB, NetBIOS | Win Server 2019/2022 | Z1 Server Farm |
-| `ExchangeServer` | 443, 80, 587, 25, 135 | HTTPS, SMTP, RPC | Win Server 2019 | Z1 Server Farm |
-| `PrintServer` | 445, 9100 | SMB, RAW | Win Server | Z1 Server Farm |
-| `IISServer` | 80, 443 | HTTP, HTTPS | Win Server | Z1 Server Farm |
-| `SharePointServer` | 80, 443, 1433 | HTTP, HTTPS, MSSQL | Win Server | Z1 Server Farm |
-| `RDGateway` | 443, 3389 | HTTPS, RDP | Win Server | Z1 Server Farm |
-| `HyperVHost` | 5985, 3389 | WinRM, RDP | Win Server Core | Z1 Server Farm |
-| `MSMQServer` | 1801, 445 | MSMQ, SMB | Win Server | Z1 Server Farm |
-| `SalesWorkstation` | 3389, 445 | RDP, SMB | Windows 10/11 | Z1 HQ VLANs |
-| `FinanceWorkstation` | 3389, 445 | RDP, SMB | Windows 10 | Z1 HQ VLANs |
-| `RnDWorkstation` | 3389, 445 | RDP, SMB | Windows 10 | Z1 HQ VLANs |
-| `AdminWorkstation` | 3389, 445, 5985, 5986 | RDP, SMB, WinRM | Windows 10 Pro | Z1 HQ VLANs |
+The scenario generator should preferentially use these service and property identifiers for this specialist. These are not extra actions; they are the specialist's observation context and vocabulary guidance.
 
----
+| Context type | Count |
+|---|---:|
+| Service IDs | 27 |
+| Property IDs | 44 |
 
-## Goal Specification (Standalone)
+### Service IDs
 
-```yaml
-goal_config:
-  num_goals: 1
-  selection_strategy: diverse
+| Slot | Identifier |
+|---:|---|
+| 0 | `DomainController` |
+| 1 | `MSSQLServer` |
+| 2 | `FileServer` |
+| 3 | `ExchangeServer` |
+| 4 | `PrintServer` |
+| 5 | `IISServer` |
+| 6 | `SharePointServer` |
+| 7 | `RDGateway` |
+| 8 | `HyperVHost` |
+| 9 | `MSMQServer` |
+| 10 | `SalesWorkstation` |
+| 11 | `FinanceWorkstation` |
+| 12 | `RnDWorkstation` |
+| 13 | `AdminWorkstation` |
+| 14 | `iis_svc` |
+| 15 | `smbd` |
+| 16 | `winrm_svc` |
+| 17 | `rdp_svc` |
+| 18 | `mssql_svc` |
+| 19 | `exchange_svc` |
+| 20 | `print_spooler_svc` |
+| 21 | `lsass` |
+| 22 | `winlogon` |
+| 23 | `dsapiservice` |
+| 24 | `kdc` |
+| 25 | `wsus_svc` |
+| 26 | `wmi_svc` |
 
-SalesWorkstation:  value: 1000   is_goal: false   # Entry tier (Z1 VLAN entry)
-FileServer:        value: 3500   is_goal: false   # Mid tier
-MSSQLServer:       value: 6500   is_goal: false   # Near-goal tier
-DomainController:  value: 10000  is_goal: true    # TERMINAL GOAL
-```
+### Property IDs
+
+| Slot | Identifier |
+|---:|---|
+| 0 | `Windows` |
+| 1 | `Win7` |
+| 2 | `Win10` |
+| 3 | `Win11` |
+| 4 | `Win2008` |
+| 5 | `Win2012` |
+| 6 | `Win2016` |
+| 7 | `Win2019` |
+| 8 | `Win2022` |
+| 9 | `WinXP` |
+| 10 | `Win8` |
+| 11 | `Win2003` |
+| 12 | `Workstation` |
+| 13 | `LegacyWorkstation` |
+| 14 | `AdminWorkstation` |
+| 15 | `DeveloperWorkstation` |
+| 16 | `LaptopUser` |
+| 17 | `ModernWorkstation` |
+| 18 | `IISServer` |
+| 19 | `FileServer` |
+| 20 | `PrintServer` |
+| 21 | `MailServer` |
+| 22 | `HyperVHost` |
+| 23 | `MSMQServer` |
+| 24 | `DatabaseServer` |
+| 25 | `MSSQLServer` |
+| 26 | `DomainController` |
+| 27 | `ADCS` |
+| 28 | `LDAPServer` |
+| 29 | `ADIntegrated` |
+| 30 | `Unpatched` |
+| 31 | `Misconfigured` |
+| 32 | `DomainJoined` |
+| 33 | `DomainAdmin` |
+| 34 | `LocalAdmin` |
+| 35 | `NoLAPS` |
+| 36 | `NTLMRelayable` |
+| 37 | `WebServer` |
+| 38 | `AppServer` |
+| 39 | `Middleware` |
+| 40 | `BackupServer` |
+| 41 | `AuthServer` |
+| 42 | `IdentityProvider` |
+| 43 | `CertAuthority` |
+
+## Generation Rules
+
+- Use only identifiers from this file and the shared global vocabulary.
+- Do not invent probe actions such as `Remote.Probe.*`.
+- Do not use legacy scenario-only identifiers such as `External.*` or `Local.*`.
+- Do not use off-vocabulary ports such as `BGP` or `Redis`; represent those concepts through service IDs or properties when needed.
+- Every vulnerability emitted for this specialist must be one of the local or remote IDs listed above.
+- Connect actions are represented only by the listed port names.
+- Credentials are runtime objects, not vocabulary entries. They should target one of the listed services/ports and support valid fixed-pair connect actions.
+- Multi-goal scenarios are allowed, but specialist actions must remain inside this 50-action collection.
+
+## Scenario Intent
+
+Use Windows remote exploits and local privilege escalation to obtain user/admin/system access on Windows nodes.

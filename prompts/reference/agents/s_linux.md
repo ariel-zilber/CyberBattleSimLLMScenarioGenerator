@@ -1,128 +1,204 @@
-# Agent 2: S_Linux — Cloud & Container Specialist
+# S_Linux - Linux, Cloud, and Container Specialist
 
-**Zones:** Z6 AWS Cloud (WebTier → AppTier → WorkerTier → DataTier)  
-**CVE source:** `bitnami_cves.json`  
-**Terminal goal (standalone):** `AWSRedis` (value 10000, is_goal: true)  
-**Terminal goal (meta/integrated):** `AWSPostgreSQL` (value 10000, is_goal: true)
+This file is the authoritative prompt reference for `s_linux` scenario generation.
+It is aligned to `/home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml`.
 
----
+## Role
 
-## Action Types
+Exploit Linux services, cloud workloads, containers, CI/CD systems, and cloud-native infrastructure.
 
-| CBS Action Category | type | Allowed? | Rationale |
-|--------------------|------|----------|-----------|
-| `probe` vulnerabilities | REMOTE | ✅ Yes | Linux distro fingerprinting before library CVE selection |
-| `remote_access` solvability | REMOTE | ✅ Yes | Bitnami library CVEs — network-reachable RCEs |
-| `remote_access` solvability | LOCAL | ✅ Yes | Container escape from within an owned container |
-| `credential_leak` solvability | LOCAL | ✅ Yes | wp-config.php, env vars, Docker socket (requires node ownership) |
-| `discovery` solvability | — | ❌ No | S_Recon |
-| `goal_access` solvability | — | ❌ No | Goal nodes reached via S_Recon credential chain |
-| `KNOWS` constraint | — | ❌ No | S_Recon |
-| `LEAK_KNOWN_CREDENTIALS` constraint | — | ❌ No | S_Recon |
+Domain boundary: Linux servers, container runtimes, Kubernetes, AWS services, Redis/PostgreSQL/MySQL, GitLab, Jenkins, RabbitMQ, Kafka, Vault, Grafana, and related cloud services.
 
----
+Training scenarios for this specialist must be specialist-style fixed-pair compatible scenarios. In meta scenarios, the same collections define the specialist's usable action and observation surface.
 
-## Vulnerabilities
+## Fixed Action Collection
 
-### Probe Vulnerabilities (type: REMOTE, SR 1.0)
-| Name | OS Target |
-|------|-----------|
-| `Remote.Probe.Linux` | Linux (any distro) |
-| `Remote.Probe.Alpine` | Alpine Linux |
-| `Remote.Probe.Debian` | Debian / Ubuntu |
+The specialist has exactly 50 actions:
 
-### Remote Access Vulnerabilities (type: REMOTE — network-reachable)
-| Name | CVE | CVSS | SR | Service | Library / Attack |
-|------|-----|------|----|---------|-----------------|
-| `Solvability.Concourse_ContainerEscape` | CVE-2020-5415 | 10.0 | 0.90 | AWSWorkerNode | Concourse pre-6.3.1 container escape |
-| `Solvability.ApacheSpark_PrivEsc` | CVE-2023-22946 | 9.9 | 0.90 | AWSWorkerNode | Spark config proxy privilege escalation |
-| `Solvability.SnakeYAML_Deserialization` | CVE-2022-1471 | 9.8 | 0.90 | AWSAppServer | Java deserialization via SnakeYAML Constructor |
-| `Solvability.ImageMagick_ShellInject` | CVE-2025-53014 | 9.8 | 0.90 | AWSWebServer | ImageMagick shell command injection |
-| `Solvability.MySQL2_SQLInject_1` | CVE-2024-21508 | 9.8 | 0.90 | AWSMySQL | mysql2 <3.9.4 SQL injection / RCE |
-| `Solvability.MySQL2_SQLInject_2` | CVE-2024-21511 | 9.8 | 0.90 | AWSMySQL | mysql2 <3.9.7 SQL injection variant |
-| `Solvability.JavaDeserialize_RCE_1` | CVE-2024-55637 | 9.8 | 0.90 | AWSAppServer | Java deserialization untrusted data |
-| `Solvability.JavaDeserialize_RCE_2` | CVE-2024-55638 | 9.8 | 0.90 | AWSAppServer | Java deserialization untrusted data variant |
-| `Solvability.GhostCMS_CSV_Injection` | CVE-2024-34448 | 8.8 | 0.88 | AWSWebServer | Ghost CMS CSV injection → RCE |
-| `Solvability.ApacheAvro_Deserialization` | CVE-2024-47561 | 8.8 | 0.88 | AWSWorkerNode | Apache Avro schema deserialization RCE |
-| `Solvability.LibSSH_OpenSSL_RCE` | CVE-2025-5372 | 8.8 | 0.88 | AWSAppServer | libssh built with OpenSSL RCE |
-| `Solvability.GoGoProtobuf_Deserialization` | CVE-2021-3121 | 8.6 | 0.86 | AWSWorkerNode | GoGo Protobuf deserialization OOB write |
-| `Solvability.Zlib_IntOverflow` | CVE-2023-45853 | 9.8 | 0.90 | AWSAppServer | MiniZip integer overflow → heap OOB write |
-| `Solvability.OpenEXR_OOB_Write` | CVE-2023-5841 | 9.1 | 0.90 | AWSAppServer | OpenEXR scanline count OOB write |
-| `Solvability.PgDump_UntrustedData` | CVE-2025-8714 | 8.8 | 0.88 | AWSPostgreSQL | pg_dump untrusted data inclusion → RCE |
-| `Solvability.PgDump_Newline_Injection` | CVE-2025-8715 | 8.8 | 0.88 | AWSPostgreSQL | pg_dump newline injection |
-| `Solvability.ApacheCommons_AccessControl` | CVE-2025-48734 | 8.8 | 0.88 | AWSAppServer | Apache Commons improper access control |
-| `Solvability.Elasticsearch_Groovy_RCE` | CVE-2015-1427 | 9.8 | 0.90 | AWSElasticsearch | Groovy sandbox escape → unauthenticated RCE |
-| `Solvability.NodeJS_IP_SSRF` | CVE-2024-29415 | 9.8 | 0.90 | AWSAppServer | Node.js ip package SSRF → internal access |
-| `Solvability.Git_PathTraversal` | CVE-2025-48385 | 8.3 | 0.83 | AWSGitLab | Git path traversal → arbitrary file write |
-| `Solvability.GoCrypto_SSH_AuthBypass` | CVE-2024-45337 | 8.2 | 0.57 | AWSAppServer | Go crypto/ssh misuse → auth bypass |
-| `Solvability.SQLite3_IntOverflow` | CVE-2025-7458 | 9.1 | 0.90 | AWSAppServer | SQLite3 integer overflow in key info |
-| `Solvability.LibXML2_UseAfterFree_1` | CVE-2025-49794 | 9.1 | 0.90 | AWSWebServer | libxml2 use-after-free in processing |
-| `Solvability.LibXML2_UseAfterFree_2` | CVE-2025-49796 | 9.1 | 0.90 | AWSWebServer | libxml2 vulnerability in complex content |
+| Action kind | Count |
+|---|---:|
+| Local vulnerabilities | 19 |
+| Remote vulnerabilities | 17 |
+| Connect ports | 14 |
+| Total | 50 |
 
-### Local Access Vulnerabilities (type: LOCAL — require owning the container first)
-| Name | SR | Service | Attack |
-|------|----|---------|--------|
-| `Solvability.Docker_Socket_Escape` | 0.85 | AWSAppServer | Mounted Docker socket → host root via API |
-| `Solvability.Kubernetes_HostPID_Escape` | 0.80 | AWSWorkerNode | hostPID=true pod → nsenter host process |
-| `Solvability.Container_ProcMount_Escape` | 0.75 | AWSWorkerNode | Unmasked /proc/sysrq-trigger → host exec |
-| `Solvability.Redis_Noauth_Config_Rewrite` | 0.85 | AWSRedis | CONFIG SET slaveof on unauthenticated Redis → RCE |
-| `Solvability.Hadoop_FileUtil_Inject` | CVE-2022-25168 | 0.88 | AWSWorkerNode | FileUtil.unTar path injection → arbitrary write |
-| `Solvability.Bundler_DNSHijack` | CVE-2020-36327 | 0.88 | AWSAppServer | Bundler DNS hijack → malicious gem install |
+### Local Vulnerabilities
 
-### Credential Leak Vulnerabilities (type: LOCAL — from owned container)
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.Docker_Socket_Escape` |
+| 1 | `Solvability.Kubernetes_HostPID_Escape` |
+| 2 | `Solvability.Container_ProcMount_Escape` |
+| 3 | `Solvability.Redis_Noauth_Config_Rewrite` |
+| 4 | `Solvability.Hadoop_FileUtil_Inject` |
+| 5 | `Solvability.Bundler_DNSHijack` |
+| 6 | `Solvability.WordPressDB_Creds` |
+| 7 | `Solvability.Container_EnvVars` |
+| 8 | `Solvability.AWS_CredFile` |
+| 9 | `Solvability.VaultToken_EnvVar` |
+| 10 | `Solvability.KubeServiceAccount` |
+| 11 | `Solvability.MongoDB_NoAuth` |
+| 12 | `Solvability.Redis_NoAuth` |
+| 13 | `Solvability.Keycloak_AdminCreds` |
+| 14 | `Solvability.Kafka_ConfigLeak` |
+| 15 | `Solvability.Grafana_DataSource` |
+| 16 | `Solvability.Vault_Unsealed` |
+| 17 | `Solvability.Airflow_Connections` |
+| 18 | `Solvability.SSH_PrivKey_Theft` |
 
-> **Boundary rule:** S_Linux *extracts* credentials (puts them in the CBS credential store). S_Recon *propagates* them across node boundaries via `LEAK_KNOWN_CREDENTIALS`. Both steps must execute for a cross-node credential chain to complete. `Solvability.AWS_CredFile` here (extraction) and `Solvability.Cloud_CredFile` in S_Recon (propagation to AWSPostgreSQL) are distinct CBS actions, not duplicates.
+### Remote Vulnerabilities
 
-| Name | SR | Source Node | Leaked Credential |
-|------|----|------------|-------------------|
-| `Solvability.WordPressDB_Creds` | 0.72 | AWSWebServer | MySQL / PostgreSQL password |
-| `Solvability.Container_EnvVars` | 0.75 | AWSAppServer, AWSWorkerNode | All container env vars (API keys, DB passwords) |
-| `Solvability.AWS_CredFile` | 0.75 | AWSAppServer | `~/.aws/credentials` → IAM access key |
-| `Solvability.VaultToken_EnvVar` | 0.68 | AWSAppServer | HashiCorp Vault root token |
-| `Solvability.KubeServiceAccount` | 0.78 | AWSWorkerNode | Mounted K8s service account JWT |
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.Concourse_ContainerEscape` |
+| 1 | `Solvability.ApacheSpark_PrivEsc` |
+| 2 | `Solvability.SnakeYAML_Deserialization` |
+| 3 | `Solvability.ImageMagick_ShellInject` |
+| 4 | `Solvability.MySQL2_SQLInject_1` |
+| 5 | `Solvability.MySQL2_SQLInject_2` |
+| 6 | `Solvability.JavaDeserialize_RCE_1` |
+| 7 | `Solvability.JavaDeserialize_RCE_2` |
+| 8 | `Solvability.GhostCMS_CSV_Injection` |
+| 9 | `Solvability.ApacheAvro_Deserialization` |
+| 10 | `Solvability.LibSSH_OpenSSL_RCE` |
+| 11 | `Solvability.GoGoProtobuf_Deserialization` |
+| 12 | `Solvability.Zlib_IntOverflow` |
+| 13 | `Solvability.OpenEXR_OOB_Write` |
+| 14 | `Solvability.PgDump_UntrustedData` |
+| 15 | `Solvability.Elasticsearch_Groovy_RCE` |
+| 16 | `Solvability.NodeJS_IP_SSRF` |
 
----
+### Connect Ports
 
-## Services and Ports
+| Slot | Identifier |
+|---:|---|
+| 0 | `SSH` |
+| 1 | `HTTP` |
+| 2 | `HTTPS` |
+| 3 | `FTP` |
+| 4 | `SMTP` |
+| 5 | `DNS` |
+| 6 | `MSSQL` |
+| 7 | `MySQL` |
+| 8 | `PostgreSQL` |
+| 9 | `VNC` |
+| 10 | `Telnet` |
+| 11 | `SNMP` |
+| 12 | `NetBIOS` |
+| 13 | `WMI` |
 
-| Service | Primary Ports | Protocol | Container Runtime | Z6 Tier |
-|---------|--------------|----------|------------------|---------|
-| `AWSWebServer` | 80, 443 | HTTP, HTTPS | Nginx / WordPress / Apache | WebTier |
-| `AWSAppServer` | 3000, 8080, 8200 | HTTP, HTTPS | Node.js / Go / Vault | AppTier |
-| `AWSRedis` | 6379 | Redis binary | Redis (GoRuntime) | DataTier Hub |
-| `AWSPostgreSQL` | 5432 | PostgreSQL | PostgreSQL / Alpine | DataTier |
-| `AWSMySQL` | 3306 | MySQL | MySQL / Debian | DataTier |
-| `AWSElasticsearch` | 9200, 9300 | HTTP, binary | Elasticsearch / Java | DataTier |
-| `AWSCassandra` | 9042 | CQL | Cassandra / Java | DataTier |
-| `AWSWorkerNode` | 9092, 2181 | Kafka, Zookeeper | Kafka / Java | WorkerTier |
-| `AWSRabbitMQ` | 5672, 15672 | AMQP, HTTP | RabbitMQ | WorkerTier |
-| `AWSAuthServer` | 8080, 8443 | HTTP, HTTPS | Keycloak / Java | AuthTier |
-| `AWSGitLab` | 80, 443, 22 | HTTP, HTTPS, SSH | GitLab | MgmtTier |
-| `AWSJenkins` | 8080 | HTTP | Jenkins | MgmtTier |
+## Observation Context Collection
 
----
+The scenario generator should preferentially use these service and property identifiers for this specialist. These are not extra actions; they are the specialist's observation context and vocabulary guidance.
 
-## Goal Specification
+| Context type | Count |
+|---|---:|
+| Service IDs | 30 |
+| Property IDs | 52 |
 
-```yaml
-# ── Standalone specialist training ──────────────────────────────────────────
-goal_config:
-  num_goals: 1
-  selection_strategy: diverse
+### Service IDs
 
-AWSWebServer:  value: 1000   is_goal: false   # Entry tier
-AWSAppServer:  value: 3500   is_goal: false   # Mid tier
-AWSRedis:      value: 10000  is_goal: true    # TERMINAL GOAL (standalone)
-```
+| Slot | Identifier |
+|---:|---|
+| 0 | `AWSWebServer` |
+| 1 | `AWSAppServer` |
+| 2 | `AWSRedis` |
+| 3 | `AWSPostgreSQL` |
+| 4 | `AWSMySQL` |
+| 5 | `AWSElasticsearch` |
+| 6 | `AWSCassandra` |
+| 7 | `AWSWorkerNode` |
+| 8 | `AWSRabbitMQ` |
+| 9 | `AWSAuthServer` |
+| 10 | `AWSGitLab` |
+| 11 | `AWSJenkins` |
+| 12 | `sshd` |
+| 13 | `httpd` |
+| 14 | `apache2` |
+| 15 | `nginx` |
+| 16 | `ftpd` |
+| 17 | `mysqld` |
+| 18 | `postgres_svc` |
+| 19 | `docker_api` |
+| 20 | `kubelet` |
+| 21 | `redis_svc` |
+| 22 | `memcached_svc` |
+| 23 | `elastic_svc` |
+| 24 | `grafana_svc` |
+| 25 | `jenkins_svc` |
+| 26 | `gitlab_svc` |
+| 27 | `nginx_proxy` |
+| 28 | `vault_svc` |
+| 29 | `consul_svc` |
 
-**Standalone note:** AWSRedis is the terminal goal for isolated S_Linux training because it is reachable without cross-node credential propagation: AWSWebServer (REMOTE exploit) → AWSAppServer (REMOTE exploit) → AWSRedis (LOCAL: `Redis_Noauth_Config_Rewrite`). AWSPostgreSQL cannot be the standalone goal — it has no REMOTE CVEs and S_Linux does not hold `LEAK_KNOWN_CREDENTIALS`, so the episode would never terminate.
+### Property IDs
 
-```yaml
-# ── Meta / integrated training ───────────────────────────────────────────────
-AWSWebServer:   value: 1000   is_goal: false   # Entry tier
-AWSAppServer:   value: 3500   is_goal: false   # Mid tier
-AWSRedis:       value: 6500   is_goal: false   # Near-goal (hub shortcut reward)
-AWSPostgreSQL:  value: 10000  is_goal: true    # TERMINAL GOAL
-```
+| Slot | Identifier |
+|---:|---|
+| 0 | `Linux` |
+| 1 | `Unix` |
+| 2 | `Ubuntu` |
+| 3 | `CentOS` |
+| 4 | `Debian` |
+| 5 | `Alpine` |
+| 6 | `RedHat` |
+| 7 | `Kali` |
+| 8 | `DeveloperWorkstation` |
+| 9 | `WebServer` |
+| 10 | `NginxServer` |
+| 11 | `ApacheServer` |
+| 12 | `LoadBalancer` |
+| 13 | `ReverseProxy` |
+| 14 | `FTPServer` |
+| 15 | `AppServer` |
+| 16 | `APIGateway` |
+| 17 | `Middleware` |
+| 18 | `CacheServer` |
+| 19 | `MessageBroker` |
+| 20 | `BackupServer` |
+| 21 | `DatabaseServer` |
+| 22 | `MySQLServer` |
+| 23 | `PostgreSQLServer` |
+| 24 | `MongoDBServer` |
+| 25 | `RedisServer` |
+| 26 | `ElasticsearchServer` |
+| 27 | `NoSQL` |
+| 28 | `PostgreSQL` |
+| 29 | `Kubernetes` |
+| 30 | `Pod` |
+| 31 | `Container` |
+| 32 | `WorkerNode` |
+| 33 | `K8sCluster` |
+| 34 | `CloudInstance` |
+| 35 | `AWS` |
+| 36 | `EC2` |
+| 37 | `EKS` |
+| 38 | `CloudLambda` |
+| 39 | `CloudRDS` |
+| 40 | `IMDS` |
+| 41 | `IMDSv1` |
+| 42 | `Serverless` |
+| 43 | `etcd` |
+| 44 | `DMZ` |
+| 45 | `Unpatched` |
+| 46 | `Misconfigured` |
+| 47 | `LocalAdmin` |
+| 48 | `AuthServer` |
+| 49 | `IdentityProvider` |
+| 50 | `OracleServer` |
+| 51 | `MailServer` |
 
-**Meta note:** AWSPostgreSQL has no REMOTE CVEs (Alpine, no exposed attack surface). Goal is only reachable via S_Recon `LEAK_KNOWN_CREDENTIALS` propagation from wp-config or Redis credentials. This is intentional — forces the credential chain.
+## Generation Rules
+
+- Use only identifiers from this file and the shared global vocabulary.
+- Do not invent probe actions such as `Remote.Probe.*`.
+- Do not use legacy scenario-only identifiers such as `External.*` or `Local.*`.
+- Do not use off-vocabulary ports such as `BGP` or `Redis`; represent those concepts through service IDs or properties when needed.
+- Every vulnerability emitted for this specialist must be one of the local or remote IDs listed above.
+- Connect actions are represented only by the listed port names.
+- Credentials are runtime objects, not vocabulary entries. They should target one of the listed services/ports and support valid fixed-pair connect actions.
+- Multi-goal scenarios are allowed, but specialist actions must remain inside this 50-action collection.
+
+## Scenario Intent
+
+Use Linux/cloud remote exploits and local credential or secret extraction to progress through cloud and container tiers.

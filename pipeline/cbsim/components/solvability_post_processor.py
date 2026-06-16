@@ -148,6 +148,7 @@ class SolvabilityPostProcessor:
     def ensure_solvability(self):
         self._reachable_cache.clear()  # Invalidate stale entries from any prior call
         print("\n[Solvability] Ensuring scenario is solvable...")
+        self._ensure_external_routing()   # must run first: bridges start→internal subnets (Q38)
         self._ensure_entry_point_access()
         self._ensure_credential_chain()
         self._ensure_discovery()
@@ -430,7 +431,7 @@ class SolvabilityPostProcessor:
             return
 
         from cyberbattle.simulation.firewall import RulePermission, FirewallRule
-        from cyberbattle.simulation.model import Subnet
+        from cyberbattle.simulation.network import Subnet
 
         existing_nets = {r.subnet.network for r in fw.outgoing if hasattr(r.subnet, 'network')}
         

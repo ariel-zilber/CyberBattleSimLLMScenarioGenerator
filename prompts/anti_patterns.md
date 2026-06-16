@@ -626,3 +626,51 @@ services:
   AWSRedis:
     is_goal: false
 ```
+
+---
+
+### AP-024: `shared_goal_name` declared but not propagated
+
+**WRONG — shared name only in `goal_config`, not in `base_properties` or goal services' `default_properties`:**
+```yaml
+config:
+  goal_config:
+    num_goals: 4
+    shared_goal_name: SensitiveResource   # ← declared
+
+identifiers:
+  base_properties:
+    - Linux
+    - AWS                                 # ← SensitiveResource MISSING
+
+services:
+  S3Bucket:
+    is_goal: true
+    default_properties:
+      - AWS
+      - S3                                # ← SensitiveResource MISSING
+```
+
+**CORRECT — same name in three places:**
+```yaml
+config:
+  goal_config:
+    num_goals: 4
+    shared_goal_name: SensitiveResource
+
+identifiers:
+  base_properties:
+    - Linux
+    - AWS
+    - SensitiveResource                   # ← registered
+
+services:
+  S3Bucket:
+    is_goal: true
+    default_properties:
+      - AWS
+      - S3
+      - SensitiveResource                 # ← attached to every is_goal service
+```
+
+**Why it matters:** Without registration, the validator flags `SensitiveResource` as an orphan property and the shared-name semantic silently fails. Without attaching to every `is_goal` service, only the runtime `GoalNormalizer._apply_shared_goal_name` injects the property — fine in normal pipeline runs, but absent in any path that bypasses normalization (e.g., direct generator calls).

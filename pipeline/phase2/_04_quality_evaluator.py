@@ -236,27 +236,28 @@ def _build_llm_eval_prompt(yaml_text: str, config_name: str,
             f"{k}={v}" for k, v in sorted(oc.items(), key=lambda x: -x[1]) if v > 0
         ) if oc else "  (none)"
 
-        # ── Cumulative Success Rate (CSR) Calculation (Q27) ──────────────────
-        # Computes end-to-end probability floor for DRL training feasibility.
+        # ── Cumulative Success Rate (CSR) Approximation ───────────────────────
+        # Estimates end-to-end reward probability for DRL training feasibility.
+        # Uses observed per-action exploit SRs and mean steps-to-goal from BFS
+        # metrics (no per-hop breakdown available; this is an approximation).
         csr_data = ""
-        path_info = graph_metrics.get("attack_paths", {}).get("shortest_path_to_goal", [])
-        if path_info and isinstance(path_info, list):
-            # Calculate end-to-end SR: P(success) = Product(SR_i)
-            # We assume a base SR of 0.75 for missing data, or use actual metrics if available.
-            path_srs = [node.get("exploit_sr", 0.75) if isinstance(node, dict) else 0.75 for node in path_info]
-            cumulative_sr = 1.0
-            for sr in path_srs:
-                cumulative_sr *= sr
-            
+        _as_data    = graph_metrics.get("action_stats", {})
+        _ap_data    = graph_metrics.get("attack_paths", {})
+        _local_sr   = _as_data.get("mean_local_attack_sr", 0.0)
+        _remote_sr  = _as_data.get("mean_remote_attack_sr", 0.0)
+        _steps      = _ap_data.get("mean_steps_to_first_goal", 0.0)
+        if _local_sr > 0 and _remote_sr > 0 and _steps > 0:
+            _avg_exploit_sr = (_local_sr + _remote_sr) / 2
+            cumulative_sr   = _avg_exploit_sr ** _steps
             csr_status = "CRITICAL (Reward Sparsity)" if cumulative_sr < 0.10 else \
-                         "WARNING (Slow Convergence)" if cumulative_sr < 0.25 else "HEALTHY"
-            
+                         "WARNING (Slow Convergence)"  if cumulative_sr < 0.25 else "HEALTHY"
             csr_data = f"""
-### DRL Training Feasibility: Cumulative Success Rate (CSR)
-- Shortest Attack Path : {len(path_info)} hops
-- Cumulative SR (CSR)  : {cumulative_sr:.2%}
-- Convergence Signal   : {csr_status}
-  (Success reward seen ~1 in {int(1/cumulative_sr) if cumulative_sr > 0 else 'inf'} training episodes)
+### DRL Training Feasibility: Cumulative Success Rate (CSR, approx.)
+- Mean exploit SR       : {_avg_exploit_sr:.2%}  (local={_local_sr:.2%}, remote={_remote_sr:.2%})
+- Mean steps to goal    : {_steps:.0f}
+- CSR estimate          : {cumulative_sr:.2%}  (avg_exploit_sr ^ steps)
+- Convergence Signal    : {csr_status}
+  (Success reward visible ~1 in {int(1/cumulative_sr) if cumulative_sr > 0 else 'inf'} training episodes)
 """
         # ─────────────────────────────────────────────────────────────────────
 

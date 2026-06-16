@@ -24,7 +24,9 @@ from pathlib import Path
 import yaml
 
 TOOLS_DIR = Path(__file__).parent
+REPO_ROOT = TOOLS_DIR.parent.parent
 sys.path.insert(0, str(TOOLS_DIR))
+sys.path.insert(0, str(REPO_ROOT))
 
 try:
     from yaml import CLoader as _LOADER
@@ -32,10 +34,10 @@ except ImportError:
     from yaml import Loader as _LOADER
 
 # ── reuse entry loading from executive report ─────────────────────────────────
-from generate_executive_report import build_entries  # noqa: E402
+from pipeline.reporting.executive_report import build_entries  # noqa: E402
 
 # ── zone metadata from scenario graph ────────────────────────────────────────
-from generate_scenario_graph import (               # noqa: E402
+from pipeline.reporting.scenario_graph import (               # noqa: E402
     _GT_ZONES, _GT_SERVICE_PREFIX, _ZONE_CANONICAL_CIDRS,
 )
 
@@ -77,6 +79,10 @@ def _e(text: str) -> str:
     for old, new in [
         ("→", r"$\rightarrow$"), ("←", r"$\leftarrow$"),
         ("—", "--"), ("–", "-"), ("×", r"$\times$"),
+        ("≥", r"$\geq$"), ("≤", r"$\leq$"), ("≠", r"$\neq$"),
+        ("∩", r"$\cap$"), ("∪", r"$\cup$"), ("∈", r"$\in$"),
+        ("∅", r"$\emptyset$"), ("−", "-"), ("∏", r"$\prod$"),
+        ("ᵢ", r"$_i$"),
         ("✓", r"\checkmark"), ("✗", r"$\times$"), ("•", r"\textbullet{}"),
         (" ", " "), (" ", " "),
     ]:
@@ -870,6 +876,29 @@ def _build_gemini_prompt(entry: dict, config_path: "Path | None") -> str:
         if zk not in active_zones:
             active_zones.append(zk)
 
+    # Determine background zones (canonical zones not present in active scenario)
+    _BG_ZONE_META = {
+        "Z4_InternetEdge": ("Z4 — Internet Edge",              "10.0.1.0/24",  "ISP routers, WAF appliances"),
+        "Z2_HQEdge":       ("Z2 — HQ Edge",                    "10.0.2.0/24",  "next-gen firewalls, core switches"),
+        "Z1_HQVLANs":      ("Z1 — Corporate HQ / VLANs",       "10.1.0.0/24",  "domain-joined workstations"),
+        "Z1_ServerFarm":   ("Z1 — Corporate HQ / Server Farm", "10.1.10.0/24", "file servers, print servers"),
+        "Z5_BranchOffice": ("Z5 — Branch Office",              "10.2.0.0/24",  "branch routers, SD-WAN"),
+        "Z6_AWSCloud":     ("Z6 — AWS Cloud",                  "10.3.0.0/24",  "web VMs, app servers"),
+    }
+    # Map active zone keys to canonical IDs for overlap detection
+    _ACTIVE_TO_CANONICAL = {
+        "InternetEdge":  "Z4_InternetEdge",
+        "HQ_Edge":       "Z2_HQEdge",
+        "Z1_HQVLANs":    "Z1_HQVLANs",
+        "Z1_ServerFarm": "Z1_ServerFarm",
+        "Z6_WebTier":    "Z6_AWSCloud",
+        "Z6_AppTier":    "Z6_AWSCloud",
+        "Z6_WorkerTier": "Z6_AWSCloud",
+        "Z6_DataTier":   "Z6_AWSCloud",
+    }
+    covered_canonical = {_ACTIVE_TO_CANONICAL[z] for z in active_zones if z in _ACTIVE_TO_CANONICAL}
+    background_zones  = [zid for zid in _BG_ZONE_META if zid not in covered_canonical]
+
     # Build zone description blocks
     zone_blocks = []
     for zk in active_zones:
@@ -900,6 +929,23 @@ def _build_gemini_prompt(entry: dict, config_path: "Path | None") -> str:
         "terminal node"
     )
 
+    bg_block = ""
+    if background_zones:
+        bg_lines = [
+            "---",
+            "",
+            "BACKGROUND INFRASTRUCTURE (draw as bounding boxes with light grey fill #f0f0f0,",
+            "nodes shown as dimmed/muted icons with small labels, NO attack arrows pointing",
+            "into these zones — they represent the full GLOBALTECH enterprise topology that",
+            "surrounds the active attack scenario and must appear in the diagram):",
+            "",
+        ]
+        for zid in background_zones:
+            full, cidr, nodes = _BG_ZONE_META[zid]
+            bg_lines.append(f"### Zone: {full} (subnet {cidr}) — bounding box colour: light grey (#f0f0f0)")
+            bg_lines.append(f"  - {nodes} (dimmed, no vulnerabilities, no attack path)")
+        bg_block = "\n" + "\n".join(bg_lines) + "\n"
+
     prompt = f"""Generate a highly detailed, professional enterprise network architecture diagram titled:
 "{short_title}"
 
@@ -912,14 +958,16 @@ for the attack flow. Include a legend box in the top-right corner defining:
   — Dashed line: VPN / credential propagation path
   — Bold red arrow: attacker movement / exploit path
   — Star / crown marker: terminal goal node
-Layout: landscape orientation (16:9), zones arranged left-to-right in kill-chain order.
+  — Grey zone: background infrastructure (present but not part of the attack path)
+Layout: landscape orientation (16:9), active zones arranged left-to-right in kill-chain order,
+background zones placed around the periphery or as a lower row.
 
 ---
 
 ACTIVE ZONES (draw as labelled bounding boxes with the specified fill colour):
 
 {chr(10).join(zone_blocks)}
-
+{bg_block}
 ---
 
 INTER-ZONE CONNECTIONS (draw as solid lines with protocol labels):
@@ -946,26 +994,43 @@ def _ascii(text: str) -> str:
         .replace("—", "--").replace("–", "-")
         .replace("→", "->").replace("←", "<-")
         .replace("×", "x").replace(" ", " ")
+        .replace("≥", ">=").replace("≤", "<=").replace("≠", "!=")
+        .replace("∩", " intersection ").replace("∪", " union ")
+        .replace("∈", " in ").replace("∅", "empty")
+        .replace("−", "-").replace("∏", "PRODUCT").replace("ᵢ", "_i")
         .replace("’", "'").replace("“", '"').replace("”", '"')
         .encode("ascii", errors="replace").decode("ascii")
     )
 
 
 def _frame_gemini(entry: dict, config_path: "Path | None",
+                  scenario_dir: "Path | None" = None,
                   images_dir: "Path | None" = None,
                   workdir: "Path | None" = None) -> str:
     """Image placeholder frame. Shows the generated image if it exists in
-    images_dir, otherwise a dashed placeholder with drop-in instructions."""
+    the scenario dir or the shared images_dir, otherwise a placeholder."""
     short = _e(entry.get("short_name", entry["name"]))
     name  = entry["name"]
 
     img_file = None
-    if images_dir:
+    # Check scenario-specific folder first, then shared fallback
+    for search_dir in filter(None, [scenario_dir, images_dir]):
+        candidates = []
         for ext in (".png", ".jpg", ".jpeg"):
-            candidate = images_dir / f"{name}{ext}"
+            candidates.append(search_dir / f"{name}{ext}")
+        if search_dir == scenario_dir:
+            reports_dir = search_dir / "reports"
+            candidates.extend([
+                reports_dir / "gemini_representative_image.jpg",
+                reports_dir / "gemini_representative_image.jpeg",
+                reports_dir / "gemini_representative_image.png",
+            ])
+        for candidate in candidates:
             if candidate.exists():
                 img_file = candidate
                 break
+        if img_file:
+            break
 
     if img_file:
         # Copy to workdir so pdflatex can find it
@@ -1180,28 +1245,30 @@ def build_presentation(phase2_root: Path, configs_roots: list,
         frames.append(_section_divider("Scenarios"))
         frames.append(_frame_summary(entries))
 
-        # ── Save one Gemini prompt file per scenario ──────────────────────────
-        images_dir   = output.parent / "gemini_images"
-        prompts_dir  = output.parent / "gemini_prompts"
+        # ── Save one Gemini prompt file per scenario (inside its own output dir) ─
+        images_dir = output.parent / "gemini_images"
         images_dir.mkdir(parents=True, exist_ok=True)
-        prompts_dir.mkdir(parents=True, exist_ok=True)
         for entry in entries:
             cfg_path    = _cfg(entry)
             prompt_text = _build_gemini_prompt(entry, cfg_path)
-            prompt_file = prompts_dir / f"{entry['name']}.txt"
+            scenario_dir = phase2_root / entry["name"]
+            scenario_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = scenario_dir / "gemini_prompt.txt"
             with open(prompt_file, "w", encoding="utf-8") as pf:
                 pf.write(prompt_text)
-        print(f"\n  Gemini prompts saved: {prompts_dir}/ ({len(entries)} files)")
+            print(f"  Gemini prompt → {prompt_file}")
+        print(f"\n  Gemini prompts saved: {len(entries)} file(s) in their scenario folders")
 
         colours = ["scA", "scB", "scC", "scD", "scE", "scF"]
         for i, entry in enumerate(entries):
-            cfg_path = _cfg(entry)
-            col      = colours[i % len(colours)]
+            cfg_path     = _cfg(entry)
+            col          = colours[i % len(colours)]
+            scenario_dir = phase2_root / entry["name"]
             frames.append(_scenario_divider(entry, col))
             frames.append(_frame_prompt(entry))
             frames.append(_frame_arch(entry, workdir))
             frames.append(_frame_metrics(entry, workdir))
-            frames.append(_frame_gemini(entry, cfg_path, images_dir, workdir))
+            frames.append(_frame_gemini(entry, cfg_path, scenario_dir, images_dir, workdir))
 
         # ── Compile ───────────────────────────────────────────────────────────
         tex = "\n".join(frames) + "\n\\end{document}\n"

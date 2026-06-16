@@ -35,7 +35,7 @@ from pathlib import Path
 
 import yaml
 
-TOOLS_DIR    = Path(__file__).resolve().parent   # pipeline/phase1/ (or phase2/ post D-P6)
+TOOLS_DIR    = Path(__file__).resolve().parent   # pipeline/phase2/
 _PIPELINE_DIR = TOOLS_DIR.parent               # pipeline/
 REPO_ROOT    = _PIPELINE_DIR.parent            # repo root
 PROMPTS      = REPO_ROOT / "prompts"
@@ -532,8 +532,8 @@ def repair_config(
             print("\n[WARN] No LLM critic response found for this domain")
 
     # ── Load reference docs ─────────────────────────────────────────────────
-    allowed_props = _load_doc(PROMPTS / "docs" / "reference" / "allowed_properties_dictionary.md")
-    vuln_catalog  = _load_doc(PROMPTS / "docs" / "reference" / "vulnerability_catalog.md")
+    allowed_props = _load_doc(PROMPTS / "reference" / "allowed_properties.md")
+    vuln_catalog  = _load_doc(PROMPTS / "reference" / "vulnerability_catalog.md")
 
     # ── Attempt repair loop ─────────────────────────────────────────────────
     best_cfg     = None

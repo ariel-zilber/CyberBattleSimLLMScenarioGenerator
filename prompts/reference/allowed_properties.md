@@ -67,6 +67,7 @@ These must always be present in `base_properties`:
 | `ModernWorkstation` | Up-to-date workstation |
 | `LaptopUser` | Mobile endpoint |
 | `DeveloperWorkstation` | Developer machine with elevated privileges |
+| `AdminWorkstation` | Administrator/privileged workstation with elevated domain rights |
 
 ### 3.2 Server Roles
 
@@ -83,6 +84,8 @@ These must always be present in `base_properties`:
 | `MailServer` | Email server |
 | `FTPServer` | FTP server |
 | `AppServer` | Application server |
+| `HyperVHost` | Windows Hyper-V hypervisor host | Required for HyperV_RCE |
+| `MSMQServer` | Microsoft Message Queuing server | Required for QueueJumper, MSMQ_RCE_* |
 | `APIGateway` | API gateway |
 | `Middleware` | Application middleware |
 | `CacheServer` | Redis/Memcached cache server |
@@ -294,6 +297,9 @@ These properties are derived from `data/vulnerability_db/network_devices_cves.js
 | `DomainAdmin` | Has Domain Admin privileges | Required for DCSync |
 | `LocalAdmin` | Has local administrator rights | For pass-the-hash attacks |
 | `ServiceAccount` | Runs as a service account | Required for Kerberoasting |
+| `UnconstrainedDelegation` | Kerberos unconstrained delegation enabled | Required for DelegationAbuse |
+| `ZeroLogonVulnerable` | Unpatched CVE-2020-1472 Netlogon flaw | Required for ZeroLogon exploit |
+| `NTLMRelayable` | NTLM authentication relayable (SMB signing disabled) | Required for NTLM relay attacks |
 
 ### 4.3 Protocol Vulnerabilities
 

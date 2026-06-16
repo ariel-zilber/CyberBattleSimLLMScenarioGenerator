@@ -490,9 +490,14 @@ def build_entries(phase2_root: Path, configs_roots: list, fast: bool = False) ->
     from reporting.data_utils import collect_scenario_stats, collect_attack_path_stats
     _zone_manifest = _load_zone_manifest(REPO_ROOT)
 
+    def _has_manifest(d: Path) -> bool:
+        # New structure: domain_root/scenarios/manifest.json
+        # Old structure: domain_root/manifest.json
+        return (d / "scenarios" / "manifest.json").exists() or (d / "manifest.json").exists()
+
     scenario_dirs = sorted(
         d for d in phase2_root.iterdir()
-        if d.is_dir() and (d / "manifest.json").exists()
+        if d.is_dir() and _has_manifest(d)
     )
     if not scenario_dirs:
         print(f"No scenarios found under {phase2_root}")
@@ -533,7 +538,11 @@ def build_entries(phase2_root: Path, configs_roots: list, fast: bool = False) ->
         }
 
         # ── BFS metrics ────────────────────────────────────────────────────────
-        bfs_cache = sd / "bfs_metrics.json"
+        # New structure: domain_root/metrics/bfs_metrics.json
+        # Old structure: domain_root/bfs_metrics.json
+        bfs_cache = sd / "metrics" / "bfs_metrics.json"
+        if not bfs_cache.exists():
+            bfs_cache = sd / "bfs_metrics.json"
         if bfs_cache.exists():
             try:
                 entry["agg"] = json.loads(bfs_cache.read_text(encoding="utf-8"))
@@ -547,7 +556,11 @@ def build_entries(phase2_root: Path, configs_roots: list, fast: bool = False) ->
                 print(f"    Metrics: {entry['agg'].get('solved')}/{entry['agg'].get('total')} solved")
 
         # ── Quality scores ─────────────────────────────────────────────────────
-        quality_cache = sd / "quality_evaluation.json"
+        # New structure: domain_root/metrics/quality_evaluation.json
+        # Old structure: domain_root/quality_evaluation.json
+        quality_cache = sd / "metrics" / "quality_evaluation.json"
+        if not quality_cache.exists():
+            quality_cache = sd / "quality_evaluation.json"
         cfg_path = _find_config(sd, configs_roots)
         cfg = None
         if quality_cache.exists():

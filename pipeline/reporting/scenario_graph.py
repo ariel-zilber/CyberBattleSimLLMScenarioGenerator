@@ -378,6 +378,8 @@ def parse_scenario(nodes_dir: Path):
         for rule in (raw.get("firewall") or {}).get("outgoing") or []:
             if isinstance(rule, dict):
                 r_net = rule.get("subnet", {}).get("network", "")
+                if isinstance(r_net, list):
+                    r_net = r_net[0] if r_net else ""
                 if r_net and r_net != subnet and not r_net.endswith("/32"):
                     fw_out_subnets.add(r_net)
 
@@ -1943,7 +1945,7 @@ def main():
             # Reuse existing schema-level logic
             nodes, subnets, cross_links, node_edges, edge_ports = parse_config_schema(target)
             zone_rects, node_pos, cw, ch = compute_layout(subnets, nodes, cross_links)
-            svg = render(nodes, subnets, cross_links, node_edges, zone_rects, node_pos, cw, ch, edge_ports=edge_ports)
+            svg = render(nodes, subnets, cross_links, node_edges, zone_rects, node_pos, cw, ch, subnet_ports=edge_ports)
             out_path.write_text(svg, encoding="utf-8")
             print(f"[✓] Schema visualization → {out_path}")
         return

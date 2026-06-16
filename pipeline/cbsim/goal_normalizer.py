@@ -36,6 +36,13 @@ YAML schema addition (in config section):
       allow_promote: true             # Allow promoting non-goal nodes
       allow_demote: true              # Allow demoting existing goal nodes
       min_goal_value: 500             # Minimum node value to be promotable
+      shared_goal_name: GoalA         # If set, every goal node gets this
+                                      # value added to its properties list.
+                                      # All goals are then observed by the
+                                      # agent as instances of one goal class.
+                                      # Combined with stop_at_goal_reached
+                                      # at training time, the reward fires
+                                      # only on first acquisition.
 """
 
 import re
@@ -75,6 +82,24 @@ class GoalNormalizer:
         self.allow_promote = goal_cfg.get('allow_promote', True)
         self.allow_demote = goal_cfg.get('allow_demote', True)
         self.min_goal_value = goal_cfg.get('min_goal_value', 500)
+        # When set, every goal node is tagged with this property so that all
+        # goals are observed as instances of one shared goal class.
+        self.shared_goal_name: Optional[str] = goal_cfg.get('shared_goal_name')
+        # Optional per-group naming: list of {name, services} entries.  Each
+        # goal node is tagged with the name of the group whose `services`
+        # list contains its service type.  This lets a single scenario have
+        # multiple distinct goal classes (e.g. DataAccess vs PrivilegedIdentity)
+        # while still firing the reward only once per group.
+        raw_groups = goal_cfg.get('shared_goal_names') or []
+        self.shared_goal_groups: List[Dict] = []
+        if isinstance(raw_groups, list):
+            for entry in raw_groups:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get('name')
+                svcs = entry.get('services') or []
+                if isinstance(name, str) and isinstance(svcs, list) and name and svcs:
+                    self.shared_goal_groups.append({'name': name, 'services': list(svcs)})
 
         # Scoring weights — all overridable via goal_config in YAML
         self._w_value_norm       = goal_cfg.get('value_normalizer',         1000.0)
@@ -171,7 +196,91 @@ class GoalNormalizer:
         for gid in final_goals:
             print(f"  → {gid} (value={self.nodes[gid].value})")
 
+        # Apply shared-goal-name tagging. shared_goal_groups (per-group
+        # naming) takes precedence over shared_goal_name (single-name) when
+        # both are set. After tagging the goal nodes, strip any goal-name
+        # properties from non-goal nodes so the goal-name property is a
+        # binary indicator of is_goal status.
+        all_names: Set[str] = set()
+        if self.shared_goal_groups:
+            self._apply_shared_goal_names(final_goals)
+            all_names = {grp['name'] for grp in self.shared_goal_groups}
+        elif self.shared_goal_name:
+            self._apply_shared_goal_name(final_goals, self.shared_goal_name)
+            all_names = {self.shared_goal_name}
+
+        if all_names:
+            goal_set = set(final_goals)
+            stripped = 0
+            for nid, node in self.nodes.items():
+                if nid == 'start' or nid in goal_set:
+                    continue
+                props = getattr(node, 'properties', None)
+                if not props:
+                    continue
+                before = len(props)
+                node.properties = [p for p in props if p not in all_names]
+                stripped += before - len(node.properties)
+                if hasattr(node, 'goal_name') and getattr(node, 'goal_name') in all_names:
+                    delattr(node, 'goal_name')
+            if stripped:
+                print(f"[GoalNormalizer] Stripped goal-name properties from "
+                      f"non-goal nodes: removed {stripped} occurrence(s)")
+
         return self._summary(final_goals, demoted, promoted)
+
+    def _apply_shared_goal_name(self, goal_ids: List[str], name: str) -> None:
+        """Tag every goal node with a single ``name`` property (in place)."""
+        n_tagged = 0
+        for gid in goal_ids:
+            if self._tag_node(gid, name):
+                n_tagged += 1
+        print(f"[GoalNormalizer] Tagged {n_tagged}/{len(goal_ids)} goal nodes "
+              f"with shared_goal_name='{name}'")
+
+    def _apply_shared_goal_names(self, goal_ids: List[str]) -> None:
+        """Tag each goal node with the name of the group whose `services`
+        list contains its service type.  Goals whose service is not listed
+        in any group are left untagged but reported."""
+        # Build service → group-name lookup once.
+        svc_to_name: Dict[str, str] = {}
+        for grp in self.shared_goal_groups:
+            for svc in grp['services']:
+                svc_to_name[str(svc)] = grp['name']
+
+        tagged_by_name: Dict[str, int] = {}
+        untagged: List[str] = []
+        for gid in goal_ids:
+            svc = self._get_node_service_type(gid)
+            name = svc_to_name.get(svc)
+            if name is None:
+                untagged.append(gid)
+                continue
+            if self._tag_node(gid, name):
+                tagged_by_name[name] = tagged_by_name.get(name, 0) + 1
+
+        for name, n in sorted(tagged_by_name.items()):
+            print(f"[GoalNormalizer] Tagged {n} goal node(s) with '{name}'")
+        if untagged:
+            print(f"[GoalNormalizer] WARNING: {len(untagged)} goal node(s) not in any "
+                  f"shared_goal_names group: {untagged[:5]}{'…' if len(untagged) > 5 else ''}")
+
+    def _tag_node(self, node_id: str, name: str) -> bool:
+        """Add ``name`` to the node's properties list and mirror it onto a
+        ``goal_name`` attribute. Returns True if a tag was newly added,
+        False if it was already present."""
+        node = self.nodes[node_id]
+        props = getattr(node, 'properties', None)
+        if props is None:
+            node.properties = [name]
+            setattr(node, 'goal_name', name)
+            return True
+        if name not in props:
+            props.append(name)
+            setattr(node, 'goal_name', name)
+            return True
+        setattr(node, 'goal_name', name)
+        return False
 
     # =====================================================================
     # GOAL NODE COLLECTION

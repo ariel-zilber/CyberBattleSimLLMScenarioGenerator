@@ -56,7 +56,7 @@ The output is parsed by a strict Python validator. All of these are non-negotiab
 1. **Property Registration:** Every property used in `default_properties`, `match_properties`, or constraint targets MUST appear in `identifiers.base_properties`.
 2. **Breach Node:** `identifiers.base_properties` MUST contain the exact string `breach_node`.
 3. **GroupName in Constraints:** `source` and `target` in all `constraints` blocks MUST be GROUP NAMEs (e.g., `AppServers`), not service names (`AppServer`). Exception: `MUST_HAVE` uses a property name as `target`.
-4. **Mandatory Goal:** At least one service MUST have `is_goal: true`. Goal services MUST NOT have the `Unauthenticated` property.
+4. **Mandatory Goal:** At least one service MUST have `is_goal: true`. Goal services MUST NOT have the `Unauthenticated` property. Multiple services MAY have `is_goal: true` for goal redundancy — combine with `config.goal_config.num_goals > 1`. If you set `config.goal_config.shared_goal_name: <Name>`, that string MUST be listed in `identifiers.base_properties` AND added to `default_properties` of every `is_goal: true` service. This makes all goal nodes observably identical to the agent, so the win reward fires only on the first acquisition.
 5. **Probability Required:** Every entry in `solvability_vulnerabilities` MUST have a `probability` field. Derive from severity: CRITICAL → 0.85; HIGH → 0.65; MEDIUM → 0.45.
 6. **Required Service Keys:** Every service MUST define: `port`, `value`, `allowed_os`, `default_properties`, `is_goal`.
 7. **String Rewards:** Every `reward` field MUST be a descriptive string (e.g., `"RCE on Exchange via ProxyLogon"`). Never an integer.

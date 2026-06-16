@@ -91,8 +91,9 @@ metadata:
 | `min_total_nodes` | Integer | Yes | Minimum number of nodes the generator must create |
 | `max_total_nodes` | Integer | Yes | Maximum number of nodes the generator may create |
 | `goal_config` | Dictionary | Yes | Configuration for goal selection |
-| `goal_config.num_goals` | Integer | Yes | Number of goal nodes to designate per episode |
+| `goal_config.num_goals` | Integer | Yes | Number of goal nodes to designate per episode. Set `> 1` for goal redundancy (multiple acceptable target nodes, agent wins by reaching any one). |
 | `goal_config.selection_strategy` | String | Yes | How to select goals. Use `diverse` to spread goals across tiers |
+| `goal_config.shared_goal_name` | String | Optional | If set, every goal node receives this property and `goal_name` attribute, making all goals observable as instances of one goal class. Combined with `stop_at_goal_reached: true` at training time, the reward fires only on first acquisition — even with `num_goals > 1`. Must be listed in `identifiers.base_properties` AND in `default_properties` of every `is_goal: true` service. |
 
 ---
 

@@ -1,181 +1,222 @@
-# Agent 5: S_Lateral — Post-Exploitation Lateral Movement Specialist
+# S_Lateral - Lateral Movement and Credential Reuse Specialist
 
-**Zones:** All zones — wherever stolen credentials exist  
-**CVE source:** `windows_cves.json` (lateral movement subset — exclusive ownership)  
-**Terminal goal (standalone):** First owned node in the target zone (value 10000, is_goal: true)
+This file is the authoritative prompt reference for `s_lateral` scenario generation.
+It is aligned to `/home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml`.
 
-**Scope:** S_Lateral specializes in the full **credential lifecycle**: extraction, then relay. It fires LOCAL `credential_leak` techniques (Mimikatz_LSASS, LAPS_Password_Read, etc.) on owned nodes to populate the credential store, then selects the correct relay or remote-execution technique to cross a zone boundary. It does not exploit OS memory corruption bugs and does not probe services — those belong to surface specialists. Cloud-specific credential extraction (Container_EnvVars, AWS_CredFile) stays with S_Linux.
+## Role
 
-**CBS mechanic split (D-A3):**
-- `credential_leak` solvability entry → **active**: S_Lateral chooses to fire the LOCAL loot action on an owned node → credential enters the store.
-- `LEAK_KNOWN_CREDENTIALS` constraint → **passive**: CBS engine fires automatically when the node holding the constraint is owned — no agent action required.
+Reuse credentials, hashes, tickets, relays, service execution, and post-exploitation primitives across zones.
 
----
+Domain boundary: Credential relay, WinRM/SMB/LDAP execution, MSSQL pivots, Exchange relay, ADCS lateral paths, Kerberoasting, credential extraction, and cross-zone movement.
 
-## Action Types
+Training scenarios for this specialist must be specialist-style fixed-pair compatible scenarios. In meta scenarios, the same collections define the specialist's usable action and observation surface.
 
-| CBS Action Category | type | Allowed? | Rationale |
-|--------------------|------|----------|-----------|
-| `probe` vulnerabilities | — | ❌ No | S_Windows / S_Network own OS fingerprinting |
-| `remote_access` solvability | — | ❌ No | OS RCEs belong to S_Windows / S_Network / S_Linux |
-| `credential_leak` solvability | LOCAL | ✅ Yes | Extraction: Mimikatz_LSASS, LAPS_Password_Read, GPP_Password_Decryption, WinRM_Credential_Cache — populates store for relay (D-A1) |
-| `discovery` solvability | — | ❌ No | Not S_Lateral's role |
-| `lateral_movement` solvability | REMOTE | ✅ Yes | NTLM relay, WinRM remote exec — no RCE needed, creds suffice |
-| `lateral_movement` solvability | LOCAL | ✅ Yes | MSSQL xp_cmdshell, Exchange NTLM relay — requires owning source node |
-| `goal_access` solvability | LOCAL | ✅ Yes | First node in target zone reached via credential use |
+## Fixed Action Collection
 
----
+The specialist has exactly 50 actions:
 
-## What S_Lateral Learns
+| Action kind | Count |
+|---|---:|
+| Local vulnerabilities | 34 |
+| Remote vulnerabilities | 4 |
+| Connect ports | 12 |
+| Total | 50 |
 
-Given credential cache + discovered target nodes, the agent must choose:
-- **Which credential type to use** — NTLM hash · Kerberos ticket · plaintext password
-- **Which technique matches that credential** — PtH · PtT · NTLM relay · WinRM exec · MSSQL xp_cmdshell · ADCS cert auth
-- **Which target node is reachable** with the available technique and port access
-- **Execution order** when multiple relay paths exist and some are patched
+### Local Vulnerabilities
 
-This is a non-trivial matching and sequencing problem. The optimal policy depends on what is patched, which ports are open, and which credential type was collected. A DRL agent must learn the credential-type × technique × target mapping.
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.Mimikatz_LSASS` |
+| 1 | `Solvability.LAPS_Password_Read` |
+| 2 | `Solvability.GPP_Password_Decryption` |
+| 3 | `Solvability.WinRM_Credential_Cache` |
+| 4 | `Solvability.PrintNightmare_LocalPrivEsc` |
+| 5 | `Solvability.PrintNightmare` |
+| 6 | `Solvability.SpoolSample_Coerce` |
+| 7 | `Solvability.Spooler_EOP_1` |
+| 8 | `Solvability.Spooler_RCE` |
+| 9 | `Solvability.Exchange_NTLM_Relay` |
+| 10 | `Solvability.PrivExchange` |
+| 11 | `Solvability.ProxyNotShell_NTLM` |
+| 12 | `Solvability.Exchange_RCE_Lateral_1` |
+| 13 | `Solvability.Exchange_RCE_Lateral_2` |
+| 14 | `Solvability.MSSQL_xpCmdshell` |
+| 15 | `Solvability.MSSQL_LinkedServer` |
+| 16 | `Solvability.MSSQL_RCE_Lateral` |
+| 17 | `Solvability.MSSQL_Privesc_Lateral` |
+| 18 | `Solvability.ShadowCredentials` |
+| 19 | `Solvability.RBCD_Write` |
+| 20 | `Solvability.LDAP_AuthBypass_Lateral` |
+| 21 | `Solvability.CloudIAM_LDAP_Write` |
+| 22 | `Solvability.ADCS_CertSpoof_Lateral` |
+| 23 | `Solvability.ADCS_EOP_Lateral` |
+| 24 | `Solvability.LSA_Relay` |
+| 25 | `Solvability.Outlook_NTLM_Relay` |
+| 26 | `Solvability.PetitPotam_Relay` |
+| 27 | `Solvability.Kerberoasting` |
+| 28 | `Solvability.ASREPRoasting` |
+| 29 | `Solvability.SpoolSample` |
+| 30 | `Solvability.CLFS_Privesc` |
+| 31 | `Solvability.Win_EOP_Cred` |
+| 32 | `Solvability.BloodHound_Recon` |
+| 33 | `Solvability.LDAP_Enum` |
 
----
+### Remote Vulnerabilities
 
-## Standalone Episode Flow (D-A2)
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.NTLM_Relay_SMB` |
+| 1 | `Solvability.NTLM_Relay_LDAP` |
+| 2 | `Solvability.WinRM_Exec_Hash` |
+| 3 | `Solvability.WinRM_Exec_Ticket` |
 
-No seeded breach — S_Lateral bootstraps credentials itself:
+### Connect Ports
 
-1. **Step 1 — Extraction (LOCAL `credential_leak`):** S_Lateral fires a LOCAL extraction technique on the breach node (e.g., `Solvability.Mimikatz_LSASS`). Credential enters the store.
-2. **Steps 2–N — Relay / Exec (`lateral_movement`):** S_Lateral uses the extracted credential to cross zone boundaries via relay, WinRM exec, MSSQL xp_cmdshell, ADCS cert auth, etc.
-3. **Terminal:** First node in the target zone owned → episode ends.
+| Slot | Identifier |
+|---:|---|
+| 0 | `SSH` |
+| 1 | `HTTP` |
+| 2 | `HTTPS` |
+| 3 | `SMB` |
+| 4 | `RDP` |
+| 5 | `WinRM` |
+| 6 | `LDAP` |
+| 7 | `LDAPS` |
+| 8 | `MSSQL` |
+| 9 | `SNMP` |
+| 10 | `NetBIOS` |
+| 11 | `Kerberos` |
 
-The breach node is pre-owned (SR 1.0, `breach_node` property) but **credential store starts empty**. There is no dummy `credential_leak` seed entry needed.
+## Observation Context Collection
 
----
+The scenario generator should preferentially use these service and property identifiers for this specialist. These are not extra actions; they are the specialist's observation context and vocabulary guidance.
 
-## Extraction Techniques (`credential_leak` — type: LOCAL)
+| Context type | Count |
+|---|---:|
+| Service IDs | 28 |
+| Property IDs | 72 |
 
-| Name | Technique | Required Properties | SR |
-|------|-----------|---------------------|----|
-| `Solvability.Mimikatz_LSASS` | LSASS memory dump → NTLM hashes + Kerberos tickets | `Windows`, `DomainJoined` | 0.85 |
-| `Solvability.LAPS_Password_Read` | Read LAPS local admin password from AD attribute | `Windows`, `DomainJoined`, `DomainController` | 0.75 |
-| `Solvability.GPP_Password_Decryption` | Decrypt Group Policy Preferences cpassword | `Windows`, `DomainJoined` | 0.70 |
-| `Solvability.WinRM_Credential_Cache` | Extract WinRM credential cache from DPAPI | `Windows`, `DomainJoined`, `WinRM` | 0.65 |
+### Service IDs
 
-These are the LOCAL loot actions that populate the credential store. Only S_Lateral may use `credential_leak` solvability entries (S_Windows may not).
+| Slot | Identifier |
+|---:|---|
+| 0 | `DomainController` |
+| 1 | `MSSQLServer` |
+| 2 | `FileServer` |
+| 3 | `ExchangeServer` |
+| 4 | `PrintServer` |
+| 5 | `IISServer` |
+| 6 | `SharePointServer` |
+| 7 | `RDGateway` |
+| 8 | `HyperVHost` |
+| 9 | `MSMQServer` |
+| 10 | `SalesWorkstation` |
+| 11 | `FinanceWorkstation` |
+| 12 | `RnDWorkstation` |
+| 13 | `AdminWorkstation` |
+| 14 | `ADCS_Server` |
+| 15 | `CyberArkPAM` |
+| 16 | `sshd` |
+| 17 | `smbd` |
+| 18 | `winrm_svc` |
+| 19 | `ldap_svc` |
+| 20 | `ldaps_svc` |
+| 21 | `mssql_svc` |
+| 22 | `exchange_svc` |
+| 23 | `print_spooler_svc` |
+| 24 | `lsass` |
+| 25 | `winlogon` |
+| 26 | `kdc` |
+| 27 | `wmi_svc` |
 
----
+### Property IDs
 
-## CVE Categories (Exclusive to S_Lateral)
+| Slot | Identifier |
+|---:|---|
+| 0 | `Windows` |
+| 1 | `Linux` |
+| 2 | `Unix` |
+| 3 | `Win7` |
+| 4 | `Win10` |
+| 5 | `Win11` |
+| 6 | `Win2008` |
+| 7 | `Win2012` |
+| 8 | `Win2016` |
+| 9 | `Win2019` |
+| 10 | `Win2022` |
+| 11 | `Ubuntu` |
+| 12 | `Debian` |
+| 13 | `Alpine` |
+| 14 | `Workstation` |
+| 15 | `LegacyWorkstation` |
+| 16 | `AdminWorkstation` |
+| 17 | `DeveloperWorkstation` |
+| 18 | `LaptopUser` |
+| 19 | `ModernWorkstation` |
+| 20 | `WebServer` |
+| 21 | `NginxServer` |
+| 22 | `ApacheServer` |
+| 23 | `IISServer` |
+| 24 | `FileServer` |
+| 25 | `PrintServer` |
+| 26 | `MailServer` |
+| 27 | `AppServer` |
+| 28 | `HyperVHost` |
+| 29 | `MSMQServer` |
+| 30 | `APIGateway` |
+| 31 | `Middleware` |
+| 32 | `CacheServer` |
+| 33 | `MessageBroker` |
+| 34 | `BackupServer` |
+| 35 | `DatabaseServer` |
+| 36 | `MSSQLServer` |
+| 37 | `MySQLServer` |
+| 38 | `PostgreSQLServer` |
+| 39 | `RedisServer` |
+| 40 | `DomainController` |
+| 41 | `ADCS` |
+| 42 | `ADFS` |
+| 43 | `LDAPServer` |
+| 44 | `IdentityProvider` |
+| 45 | `AuthServer` |
+| 46 | `CertAuthority` |
+| 47 | `ADIntegrated` |
+| 48 | `Kubernetes` |
+| 49 | `Pod` |
+| 50 | `Container` |
+| 51 | `WorkerNode` |
+| 52 | `CloudInstance` |
+| 53 | `AWS` |
+| 54 | `EC2` |
+| 55 | `IMDS` |
+| 56 | `Firewall` |
+| 57 | `VPN` |
+| 58 | `NetworkDevice` |
+| 59 | `Router` |
+| 60 | `Switch` |
+| 61 | `Bastion` |
+| 62 | `DMZ` |
+| 63 | `Unpatched` |
+| 64 | `Misconfigured` |
+| 65 | `DomainJoined` |
+| 66 | `DomainAdmin` |
+| 67 | `LocalAdmin` |
+| 68 | `Kerberoastable` |
+| 69 | `ASREProastable` |
+| 70 | `NoLAPS` |
+| 71 | `NTLMRelayable` |
 
-| Category | CVEs | Description |
-|----------|:----:|-------------|
-| `ntlm_relay` | 8 | NTLM hash relay via Responder/ntlmrelayx — requires network position |
-| `winrm` | 3 | WinRM remote exec with stolen credentials |
-| `credential` | 5 | Credential reuse techniques (PtH, PtT, pass-the-ticket) |
-| `print_spooler` | 11 | PrintNightmare / SpoolSample NTLM coercion → hash relay |
-| `exchange` | 29 | Exchange NTLM relay, PrivExchange, ProxyNotShell (credential-required) |
-| `mssql` | 16 | MSSQL xp_cmdshell with DA/SA creds, linked server traversal |
-| `ldap` | 8 | LDAP attribute writes (Shadow Credentials, Resource-Based Constrained Delegation) |
-| `adcs` | 7 | ADCS certificate request → Kerberos auth → PAM API |
-| **Total** | **87** | |
+## Generation Rules
 
-These 8 categories transfer exclusively from `windows_cves.json` and are not available to S_Windows.
+- Use only identifiers from this file and the shared global vocabulary.
+- Do not invent probe actions such as `Remote.Probe.*`.
+- Do not use legacy scenario-only identifiers such as `External.*` or `Local.*`.
+- Do not use off-vocabulary ports such as `BGP` or `Redis`; represent those concepts through service IDs or properties when needed.
+- Every vulnerability emitted for this specialist must be one of the local or remote IDs listed above.
+- Connect actions are represented only by the listed port names.
+- Credentials are runtime objects, not vocabulary entries. They should target one of the listed services/ports and support valid fixed-pair connect actions.
+- Multi-goal scenarios are allowed, but specialist actions must remain inside this 50-action collection.
 
----
+## Scenario Intent
 
-## Vulnerabilities
-
-### NTLM Relay / WinRM (type: REMOTE — requires credential, not RCE)
-| Name | Category | SR | Source Node | Target Technique |
-|------|----------|----|------------|-----------------|
-| `Solvability.NTLM_Relay_SMB` | ntlm_relay | 0.72 | Any domain-joined | SMB NTLM relay → captured machine hash |
-| `Solvability.NTLM_Relay_LDAP` | ntlm_relay | 0.68 | Any domain-joined | NTLM relay → LDAP attribute write (RBCD) |
-| `Solvability.WinRM_Exec_Hash` | winrm | 0.75 | AdminWorkstation | WinRM remote exec using NTLM hash |
-| `Solvability.WinRM_Exec_Ticket` | winrm | 0.70 | AdminWorkstation | WinRM remote exec using Kerberos TGT |
-
-### Print Spooler Coercion (type: LOCAL — requires owning source)
-| Name | CVE | SR | Source Node | Target Technique |
-|------|-----|----|------------|-----------------|
-| `Solvability.PrintNightmare_LocalPrivEsc` | CVE-2021-1675 | 0.88 | PrintServer, FileServer | Print Spooler LOCAL privilege escalation → SYSTEM |
-| `Solvability.PrintNightmare` | CVE-2021-34527 | 0.88 | PrintServer | Print Spooler REMOTE RCE via credential coercion |
-| `Solvability.SpoolSample_Coerce` | print_spooler | 0.75 | Any PrintServer | SpoolSample NTLM coercion → hash relay to DC |
-
-### Exchange / MSSQL Remote Execution (type: LOCAL)
-| Name | Category | SR | Source Node | Target Technique |
-|------|----------|----|------------|-----------------|
-| `Solvability.Exchange_NTLM_Relay` | exchange | 0.78 | ExchangeServer | Exchange NTLM relay → domain machine account |
-| `Solvability.PrivExchange` | exchange | 0.72 | ExchangeServer | PrivExchange DA → relay Exchange machine account |
-| `Solvability.MSSQL_xpCmdshell` | mssql | 0.80 | MSSQLServer | xp_cmdshell OS exec with SA/DA credentials |
-| `Solvability.MSSQL_LinkedServer` | mssql | 0.65 | MSSQLServer | Linked server traversal across database network |
-
-### LDAP / ADCS Certificate Chain (type: LOCAL)
-| Name | Category | SR | Source Node | Target Technique |
-|------|----------|----|------------|-----------------|
-| `Solvability.ShadowCredentials` | ldap | 0.70 | DomainController | LDAP msDS-KeyCredentialLink write → PKINIT auth |
-| `Solvability.RBCD_Write` | ldap | 0.68 | DomainController | Resource-Based Constrained Delegation via LDAP write |
-| `Solvability.ADCS_ESC1` | adcs | 0.75 | ADCS_Server | ESC1 template → certificate request → PAM API auth |
-| `Solvability.ADCS_ESC8` | adcs | 0.72 | ADCS_Server | ESC8 Web Enrollment NTLM relay → domain cert |
-
----
-
-## Zone Crossings Owned by S_Lateral
-
-| Crossing | Source | Target | Technique | CVE Category |
-|----------|--------|--------|-----------|-------------|
-| Perimeter → HQ | Z2 (HQ Edge) | Z1 (HQ VLANs) | NTLM relay from network device creds → Z1 workstation | `ntlm_relay` |
-| Perimeter → HQ | Z2 (HQ Edge) | Z1 (HQ VLANs) | WinRM remote exec with stolen creds | `winrm` |
-| Cloud → Corp | Z6 (AWS DataTier) | Z1 (HQ VLANs) | LDAP attribute write via cloud IAM → AD Seamless SSO | `ldap` |
-| DC → PAM | Z1 (DomainController) | Z8 (CyberArkPAM) | ADCS certificate → PAM API authentication | `adcs` |
-| DC → PAM | Z1 (DomainController) | Z8 (PAM DB node) | MSSQL xp_cmdshell on Z8 database node | `mssql` |
-
----
-
-## Services and Ports
-
-| Service | Primary Ports | Protocol | GLOBALTECH Zone |
-|---------|--------------|----------|----------------|
-| `DomainController` | 88, 389, 445, 636, 3268 | Kerberos, LDAP, SMB | Z1 Server Farm |
-| `ExchangeServer` | 443, 80, 135 | HTTPS, SMTP, RPC | Z1 Server Farm |
-| `MSSQLServer` | 1433, 445 | MSSQL, SMB | Z1 Server Farm / Z8 |
-| `PrintServer` | 445, 9100 | SMB, RAW | Z1 Server Farm |
-| `ADCS_Server` | 80, 443, 135 | HTTP, HTTPS, RPC | Z1 Server Farm |
-| `AdminWorkstation` | 5985, 5986, 3389 | WinRM, RDP | Z1 HQ VLANs |
-| `CyberArkPAM` | 443, 8080 | HTTPS | Z8 PAM |
-| Any domain-joined node | 445, 5985 | SMB, WinRM | All zones |
-
----
-
-## Goal Specification (Standalone)
-
-```yaml
-goal_config:
-  num_goals: 1
-  selection_strategy: diverse
-
-# S_Lateral entry: any pre-owned source node with credentials in cache
-# S_Lateral goal: first node in the target zone reached via credential technique
-
-SourceNode:   value: 0      is_goal: false   # Pre-owned by upstream specialist (not scored)
-MidNode:      value: 3500   is_goal: false   # Intermediate lateral move
-TargetEntry:  value: 10000  is_goal: true    # TERMINAL GOAL — first node in target zone
-```
-
-**Small config technique isolation:** each small config isolates one lateral movement technique:
-
-| Config | Technique isolated | CVE category |
-|--------|--------------------|-------------|
-| `slat_ntlm_relay_v1` | NTLM relay only | `ntlm_relay` |
-| `slat_winrm_creds_v1` | WinRM with hash | `winrm` |
-| `slat_mssql_lateral_v1` | xp_cmdshell with SA creds | `mssql` |
-| `slat_exchange_relay_v1` | Exchange NTLM coercion | `exchange` |
-| `slat_adcs_cert_v1` | ADCS ESC1 → PAM auth | `adcs` |
-
----
-
-## Reward Structure
-
-| Outcome | Reward |
-|---------|--------|
-| Any successful credential relay / remote exec (positive CBS result) | +1 |
-| Failed or blocked action | 0 |
-| Terminal goal reached | +1000 |
-
-Binary step signal (+1 / 0) plus large terminal bonus. All positive outcomes are equal weight regardless of credential type or technique.
+Use cached credentials and post-exploitation actions to convert access on one node into access on another node or zone.

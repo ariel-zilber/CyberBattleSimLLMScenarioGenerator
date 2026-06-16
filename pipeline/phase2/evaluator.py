@@ -753,7 +753,25 @@ def compute_attack_path_metrics(nodes: Dict[str, dict]) -> dict:
             node_id: {
               "reachable":           bool,
               "min_hops_from_start": int | None,  # None = unreachable
+              "vuln_count":          int,    # # of vulnerabilities on node
+              "property_count":      int,    # # of properties on node
+              "service_count":       int,    # # of services on node
+              "in_degree":           int,    # incoming attack edges
+              "out_degree":          int,    # outgoing attack edges
+              "info_content":        int,    # vuln + property + service total
             }
+          },
+          "summary": {
+            "num_goals":         int,   # total is_goal nodes in scenario
+            "reachable_goals":   int,   # how many goals are BFS-reachable
+            "info_per_node": {          # corpus-level density aggregates
+              "vuln_count":     {"mean": float, "min": int, "max": int},
+              "property_count": {"mean": float, "min": int, "max": int},
+              "service_count":  {"mean": float, "min": int, "max": int},
+              "out_degree":     {"mean": float, "min": int, "max": int},
+              "info_content":   {"mean": float, "min": int, "max": int},
+            },
+            ...other aggregates...
           },
           "per_goal": {
             goal_id: {
@@ -798,13 +816,73 @@ def compute_attack_path_metrics(nodes: Dict[str, dict]) -> dict:
         src: set(tgts.keys()) for src, tgts in adj_meta.items()
     }
 
-    # ── Per-node reachability ────────────────────────────────────────────────
+    # ── Per-node reachability + information density ─────────────────────────
+    # Pre-compute in-degree once (out-degree is len(hop_adj[nid])).
+    in_degree: Dict[str, int] = {nid: 0 for nid in non_start}
+    for src, tgts in hop_adj.items():
+        for tgt in tgts:
+            if tgt in in_degree:
+                in_degree[tgt] += 1
+
     per_node: Dict[str, dict] = {}
-    for nid in non_start:
+    for nid, node in non_start.items():
         d = _bfs_depth(hop_adj, "start", nid)
+        # Information content: counts of vulnerabilities, properties, and
+        # services attached to this node, plus graph degree. The "info_content"
+        # field is a simple unweighted sum useful for ranking nodes by how
+        # much the agent's observation will say about them.
+        vulns    = node.get("vulnerabilities", {}) or {}
+        props    = node.get("properties", []) or []
+        services = node.get("services", []) or []
+        vuln_count   = len(vulns) if isinstance(vulns, dict) else len(list(vulns))
+        prop_count   = len(props)
+        svc_count    = len(services)
+        out_deg      = len(hop_adj.get(nid, ()))
+        info_content = vuln_count + prop_count + svc_count
+
+        # Exploit-likelihood metrics based on per-vuln success_rate.
+        # REMOTE vulns are the relevant ones for "how exploitable is this
+        # node from outside"; LOCAL vulns are gated by prior compromise so
+        # they're tallied separately.
+        remote_rates: List[float] = []
+        local_rates:  List[float] = []
+        if isinstance(vulns, dict):
+            for v in vulns.values():
+                if not isinstance(v, dict):
+                    continue
+                rate = _vuln_rate(v)
+                # type 3 = REMOTE, type 2 = LOCAL (CyberBattleSim convention)
+                if v.get("type") == 3:
+                    remote_rates.append(rate)
+                else:
+                    local_rates.append(rate)
+        # Cumulative likelihood that AT LEAST ONE remote vuln succeeds in a
+        # single attempt: 1 - Π(1 - rate_i).
+        def _cumulative(rs: List[float]) -> float:
+            p_fail = 1.0
+            for r in rs:
+                p_fail *= max(0.0, 1.0 - r)
+            return round(1.0 - p_fail, 4)
+        max_remote = round(max(remote_rates), 4) if remote_rates else 0.0
+        max_local  = round(max(local_rates),  4) if local_rates  else 0.0
+
         per_node[nid] = {
             "reachable":           d >= 0,
             "min_hops_from_start": d if d >= 0 else None,
+            "vuln_count":          vuln_count,
+            "property_count":      prop_count,
+            "service_count":       svc_count,
+            "in_degree":           in_degree[nid],
+            "out_degree":          out_deg,
+            "info_content":        info_content,
+            "exploit": {
+                "remote_vuln_count":          len(remote_rates),
+                "local_vuln_count":           len(local_rates),
+                "max_remote_success_rate":    max_remote,
+                "max_local_success_rate":     max_local,
+                "cumulative_remote_likelihood": _cumulative(remote_rates),
+                "cumulative_local_likelihood":  _cumulative(local_rates),
+            },
         }
 
     # ── Per-goal full path analysis ──────────────────────────────────────────
@@ -828,12 +906,49 @@ def compute_attack_path_metrics(nodes: Dict[str, dict]) -> dict:
     reachable_g    = [m for m in per_goal.values() if m.get("reachable")]
     total_reachable = sum(1 for m in per_node.values() if m["reachable"])
 
+    # Per-node information-density aggregates across all nodes.
+    vuln_counts = [pn["vuln_count"]     for pn in per_node.values()]
+    prop_counts = [pn["property_count"] for pn in per_node.values()]
+    svc_counts  = [pn["service_count"]  for pn in per_node.values()]
+    info_counts = [pn["info_content"]   for pn in per_node.values()]
+    out_degs    = [pn["out_degree"]     for pn in per_node.values()]
+    # Exploit-likelihood aggregates — useful for spotting bottleneck nodes
+    # (low max_remote → hard to exploit; cumulative_remote_likelihood says how
+    # likely random exploration is to land at least one successful exploit).
+    exploit_max_remote = [pn["exploit"]["max_remote_success_rate"]    for pn in per_node.values()]
+    exploit_cum_remote = [pn["exploit"]["cumulative_remote_likelihood"] for pn in per_node.values()]
+
+    def _agg(xs: List[int]) -> dict:
+        if not xs:
+            return {"mean": 0.0, "min": 0, "max": 0}
+        return {
+            "mean": round(sum(xs) / len(xs), 2),
+            "min":  min(xs),
+            "max":  max(xs),
+        }
+
     summary: dict = {
         "num_goals":             len(goal_ids),
         "reachable_goals":       len(reachable_g),
         "total_reachable_nodes": total_reachable,
         "total_nodes":           len(non_start),
         "reachability_ratio":    round(total_reachable / len(non_start), 3) if non_start else 0.0,
+        # Information density per node (helps detect dead-end / sparse nodes
+        # at the corpus level — see scenario_health_report.py for thresholds).
+        "info_per_node": {
+            "vuln_count":     _agg(vuln_counts),
+            "property_count": _agg(prop_counts),
+            "service_count":  _agg(svc_counts),
+            "out_degree":     _agg(out_degs),
+            "info_content":   _agg(info_counts),
+        },
+        # Exploit-likelihood aggregates derived from per-vuln success_rate.
+        # `max_remote_success_rate.min` is the worst node's best-case remote
+        # exploit chance — small values flag credit-assignment bottlenecks.
+        "exploit_likelihood": {
+            "max_remote_success_rate":      _agg(exploit_max_remote),
+            "cumulative_remote_likelihood": _agg(exploit_cum_remote),
+        },
     }
 
     if reachable_g:
@@ -994,7 +1109,22 @@ def evaluate_scenario(scenario_dir: Path, include_attack_paths: bool = True) -> 
 
     # 8. Attack path metrics (§3.4) — full per-node + per-goal analysis
     if include_attack_paths:
-        result["attack_path_metrics"] = compute_attack_path_metrics(nodes)
+        apm = compute_attack_path_metrics(nodes)
+        result["attack_path_metrics"] = apm
+        # Lift the new structural metrics from the nested summary up to the
+        # top level so _check_thresholds can read them flat.
+        apm_summary = apm.get("summary", {}) if apm else {}
+        result["reachable_goals"] = apm_summary.get("reachable_goals", 0)
+        ipn = apm_summary.get("info_per_node", {})
+        result["mean_info_content"] = ipn.get("info_content", {}).get("mean", 0.0)
+        result["min_info_content"]  = ipn.get("info_content", {}).get("min", 0)
+        exp = apm_summary.get("exploit_likelihood", {})
+        result["min_exploit_likelihood"] = (
+            exp.get("cumulative_remote_likelihood", {}).get("min", 0.0)
+        )
+        result["mean_exploit_likelihood"] = (
+            exp.get("cumulative_remote_likelihood", {}).get("mean", 0.0)
+        )
 
     return result
 
@@ -1063,13 +1193,17 @@ def compute_fairness_metrics(all_results: List[dict]) -> dict:
 # ---------------------------------------------------------------------------
 
 THRESHOLDS = {
-    "min_solvable":         True,
-    "min_cred_chain_ratio": 0.55,
-    "min_discovery_ratio":  0.70,
-    "min_goal_depth":       2,
-    "min_mean_depth":       2.5,
-    "max_goal_ratio":       0.15,
-    "min_remote_goals":     1,
+    "min_solvable":              True,
+    "min_cred_chain_ratio":      0.40,   # was 0.55 — allow direct-exploit paths
+    "min_discovery_ratio":       0.60,   # was 0.70 — real recon doesn't reach everything
+    "min_goal_depth":            2,      # minimum hop count to any goal
+    "min_mean_depth":            2.0,    # was 2.5 — allow small scenarios where mean is naturally lower
+    "max_goal_ratio":            0.25,   # was 0.15 — accommodates multi-goal redundancy patterns
+    "min_remote_goals":          1,      # ≥1 entry-accessible goal must exist
+    # Structural-quality gates derived from the per-node BFS metrics.
+    "min_reachable_goals_ratio": 0.5,    # was 1.0 — partial reachability is fine with goal redundancy
+    "min_mean_info_content":     6.0,    # was 5.0 — push nodes toward observation richness
+    "min_exploit_likelihood":    0.40,   # was 0.30 — worst node still has workable exploit chance
 }
 
 
@@ -1102,6 +1236,27 @@ def _check_thresholds(r: dict) -> List[str]:
         violations.append(
             f"remote_exploitable_goals={r['remote_exploitable_goals']} < {THRESHOLDS['min_remote_goals']}"
         )
+
+    # New gates over the lifted BFS metrics. Only enforced when the metric was
+    # actually computed (include_attack_paths=True path).
+    if r["num_goals"] > 0 and "reachable_goals" in r:
+        rg_ratio = r["reachable_goals"] / r["num_goals"]
+        if rg_ratio < THRESHOLDS["min_reachable_goals_ratio"]:
+            violations.append(
+                f"reachable_goals={r['reachable_goals']}/{r['num_goals']} "
+                f"(ratio={rg_ratio:.2f} < {THRESHOLDS['min_reachable_goals_ratio']})"
+            )
+    if "mean_info_content" in r and r["mean_info_content"] < THRESHOLDS["min_mean_info_content"]:
+        violations.append(
+            f"mean_info_content={r['mean_info_content']:.2f} < {THRESHOLDS['min_mean_info_content']} "
+            f"(scenario nodes are structurally sparse — likely dead-ends)"
+        )
+    if "min_exploit_likelihood" in r and r["min_exploit_likelihood"] < THRESHOLDS["min_exploit_likelihood"]:
+        violations.append(
+            f"min_exploit_likelihood={r['min_exploit_likelihood']:.3f} < {THRESHOLDS['min_exploit_likelihood']} "
+            f"(worst-case node has near-zero remote-exploit chance — bottleneck)"
+        )
+
     return violations
 
 

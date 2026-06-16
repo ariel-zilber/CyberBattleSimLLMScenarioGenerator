@@ -74,14 +74,16 @@ def _python() -> str:
 
 
 def _read_env(key: str, default: str = "") -> str:
-    """Read a variable from .env file, falling back to os.environ."""
+    """Read a variable from os.environ, falling back to .env file."""
+    if key in os.environ:
+        return os.environ[key]
     env_file = REPO_ROOT / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()
             if line.startswith(f"{key}=") and not line.startswith("#"):
                 return line.split("=", 1)[1].strip()
-    return os.environ.get(key, default)
+    return default
 
 
 def _dataset_root() -> Path:
@@ -111,6 +113,11 @@ class PipelineRunner:
         max_bfs_rounds: int          = MAX_BFS_ROUNDS,    # Phase 2 loop limit
         min_solve_rate: float        = MIN_SOLVE_RATE,    # Minimum fraction of solvable scenarios
         user_prompt:    str          = "",      # Natural-language generation request to persist
+        append_train:   int          = 0,       # >0: add N more train scenarios, keep existing
+        expand_topology: bool        = True,    # Inject canonical background zones before Phase 2
+        skip_phase2_report: bool      = False,   # Skip expensive EDA/PDF report generation
+        skip_graphs: bool             = False,   # Skip topology graph/PDF generation
+        skip_image: bool              = False,   # Skip representative image generation
     ):
         self._active_config  = config_path.resolve()
         self._initial_domain = config_path.stem   # fixed label for log file
@@ -118,7 +125,12 @@ class PipelineRunner:
         self.target_score    = target_score
         self.max_bfs_rounds  = max_bfs_rounds
         self.min_solve_rate  = min_solve_rate
-        self.user_prompt     = user_prompt
+        self.user_prompt      = user_prompt
+        self.append_train     = append_train
+        self.expand_topology  = expand_topology
+        self.skip_phase2_report = skip_phase2_report
+        self.skip_graphs        = skip_graphs
+        self.skip_image         = skip_image
 
         self.logs_dir = dataset_root / "logs"
         self.logs_dir.mkdir(parents=True, exist_ok=True)
@@ -251,11 +263,15 @@ class PipelineRunner:
     def _repair(self) -> Path | None:
         """Call apply_critic_fixes on the current config. Returns new config path or None."""
         self._log("  → ACTOR: calling repair_config ...")
+        run_env = {**os.environ}
+        run_env["DATASET_ROOT"] = str(self.dataset_root)
+        run_env["PYTHONPATH"] = str(REPO_ROOT) + os.pathsep + run_env.get("PYTHONPATH", "")
         result = subprocess.run(
             [_python(), "pipeline/phase2/_05_apply_critic_fixes.py",
              str(self.config_path), "--max-attempts", str(MAX_REPAIR_ATTEMPTS),
-             "--phase2-out", str(self.scenarios_out)],
+             "--phase2-out", str(self.metrics_out)],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
+            env=run_env,
         )
         for line in result.stdout.splitlines():
             self._log(f"      {line}")
@@ -514,6 +530,7 @@ class PipelineRunner:
             _python(), "pipeline/phase1/pipeline.py",
             "--config", str(self.config_path),
             "--skip-fetch",
+            "--skip-generate",
             "--train", "3", "--test", "1",
         ])
         self._ok(f"Config validated — output in phase1/{self.domain}")
@@ -586,12 +603,26 @@ class PipelineRunner:
                 self.user_prompt.strip(), encoding="utf-8"
             )
         env = {"DATASET_ROOT": str(self.dataset_root)}
+
+        if self.append_train > 0:
+            # Count existing train scenarios to compute the offset.
+            train_dir = self.scenarios_out / "train"
+            existing = len(list(train_dir.glob("*/nodes"))) if train_dir.exists() else 0
+            cmd_extra = ["--train", str(self.append_train),
+                         "--train-offset", str(existing),
+                         "--test", "0"]
+            self._log(f"  → Append mode: adding {self.append_train} train scenarios after {existing} existing")
+        else:
+            cmd_extra = [
+                "--train", str(int(_read_env("PHASE2_TRAIN_COUNT", "5"))),
+                "--test",  str(int(_read_env("PHASE2_TEST_COUNT",  "2"))),
+            ]
+
         self._run([
             _python(), "pipeline/phase2/generator.py",
             "--config", str(self.config_path),
             "--out-dir", str(self.domain_root),
-            "--train", str(int(_read_env("PHASE2_TRAIN_COUNT", "5"))),
-            "--test",  str(int(_read_env("PHASE2_TEST_COUNT",  "2"))),
+            *cmd_extra,
             "--workers", "4",
         ], env=env)
         manifest = self.scenarios_out / "manifest.json"
@@ -911,12 +942,65 @@ class PipelineRunner:
             _python(), "pipeline/reporting/scenario_graph.py",
             "--recursive", "--pdf",
             str(self.scenarios_out),
-        ])
+        ], abort_on_error=False)
         # Find the combined PDF and move it to reports_out if it's not there
         combined = self.scenarios_out / "all_scenarios_combined.pdf"
         if combined.exists():
             shutil.move(combined, self.reports_out / "all_scenarios_combined.pdf")
             self._ok(f"Combined PDF → {self.reports_out.name}/all_scenarios_combined.pdf")
+
+    def step8_standardize_topology(self) -> None:
+        """Inject canonical GLOBALTECH background zones into the final validated config.
+
+        Runs after the full actor-critic loop so quality scoring is never affected
+        by background noise. The expanded YAML is written alongside the final config
+        as <domain>_expanded.yaml — this is the standardized training artifact that
+        ensures every scenario in the dataset shares the same GLOBALTECH topology
+        skeleton, with only the attack-path zones differing between scenarios.
+        """
+        self._header(8, "Topology standardization — inject GLOBALTECH background zones")
+        try:
+            from pipeline.cbsim.scenario_expander import expand, expansion_summary
+        except ImportError as e:
+            self._warn(f"scenario_expander not available — skipping ({e})")
+            return
+
+        info = expansion_summary(self.config_path)
+        covered  = info["covered"]
+        will_add = info["will_add"]
+
+        self._log(f"  Final config : {self.config_path.name}")
+        self._log(f"  Active zones : {', '.join(covered) if covered else '(none — flat domain)'}")
+
+        if not will_add:
+            self._ok("All canonical zones already present — no background injection needed")
+            return
+
+        self._log(f"  Injecting    : {', '.join(will_add)}")
+        self.config_out.mkdir(parents=True, exist_ok=True)
+        dest = self.config_out / f"{self.config_path.stem}_expanded.yaml"
+        expand(self.config_path, dest)
+        self._ok(f"Standardized config → {dest.parent.name}/{dest.name}")
+        self._log(
+            "  NOTE: training scenarios were generated from the original config.\n"
+            "  Use the expanded YAML for DRL training to include background-zone noise."
+        )
+
+    def step7_representative_image(self) -> None:
+        self._header(7, "Phase 2 — Gemini representative image")
+        self.reports_out.mkdir(parents=True, exist_ok=True)
+        self._run([
+            _python(), "pipeline/reporting/gemini_image.py",
+            "--config", str(self.config_path),
+            "--output-dir", str(self.reports_out),
+            "--user-prompt-file", str(self.scenarios_out / "user_prompt.txt"),
+        ], abort_on_error=False)
+        image_path = self.reports_out / "gemini_representative_image.png"
+        prompt_path = self.reports_out / "gemini_image_prompt.txt"
+        if image_path.exists():
+            self._ok(f"Gemini image → {self.reports_out.name}/{image_path.name}")
+        elif prompt_path.exists():
+            self._warn("Gemini image not generated; prompt artifact was written")
 
     # ── Main run ──────────────────────────────────────────────────────────────
 
@@ -944,8 +1028,22 @@ class PipelineRunner:
             # ── Phase 2: generate → BFS → LLM eval actor-critic loop ─────────
             self.step3_phase2_generate()
             self.step4_phase2_evaluate()  # ← actor-critic loop (BFS + LLM)
-            self.step5_phase2_report()
-            self.step6_phase2_graphs()
+            if self.skip_phase2_report:
+                self._warn("Skipping Step 5 Phase 2 EDA report")
+            else:
+                self.step5_phase2_report()
+            if self.skip_graphs:
+                self._warn("Skipping Step 6 topology graphs")
+            else:
+                self.step6_phase2_graphs()
+            if self.skip_image:
+                self._warn("Skipping Step 7 representative image")
+            else:
+                self.step7_representative_image()
+
+            # ── Step 8: standardize topology (post quality loop) ─────────────
+            if self.expand_topology:
+                self.step8_standardize_topology()
 
         except RuntimeError as exc:
             self._fail(str(exc))
@@ -1001,6 +1099,36 @@ class PipelineRunner:
 # ─────────────────────────────────────────────────────────────────────────────
 # Executive report (Step 8 — cross-domain)
 # ─────────────────────────────────────────────────────────────────────────────
+
+def run_presentation_report(dataset_root: Path, configs_root: Path, title: str, log_path: Path) -> None:
+    print("\n" + "=" * 66)
+    print("  STEP 8  — Phase 3: Presentation report (Beamer PDF)")
+    print("=" * 66)
+    output = dataset_root / "reports" / "presentation.pdf"
+    cmd = [
+        _python(), "pipeline/reporting/presentation.py",
+        "--phase2-root", str(dataset_root),
+        "--configs-root", str(configs_root),
+        "--output", str(output),
+        "--title", title,
+    ]
+    print(f"  $ {' '.join(cmd)}")
+    with log_path.open("a", encoding="utf-8") as lf:
+        result = subprocess.run(
+            [str(c) for c in cmd],
+            capture_output=True, text=True, cwd=str(REPO_ROOT),
+        )
+        for line in result.stdout.splitlines():
+            lf.write(line + "\n")
+            print(f"    {line}")
+        for line in result.stderr.splitlines():
+            if line.strip():
+                lf.write(f"[stderr] {line}\n")
+    if output.exists():
+        print(f"  ✓  Presentation → {output}")
+    else:
+        print(f"  ✗  Presentation not generated")
+
 
 def run_executive_report(dataset_root: Path, title: str, log_path: Path) -> None:
     print("\n" + "=" * 66)
@@ -1062,8 +1190,22 @@ def main() -> None:
                         help="Skip Step 7 (executive report)")
     parser.add_argument("--exec-report-title", default="CyberBattleSim Scenario Dataset",
                         help="Title for the executive report")
+    parser.add_argument("--skip-presentation", action="store_true",
+                        help="Skip Step 8 (Beamer presentation PDF)")
+    parser.add_argument("--skip-phase2-report", action="store_true",
+                        help="Skip Step 5 (Phase 2 EDA report and PDF figures)")
+    parser.add_argument("--skip-graphs", action="store_true",
+                        help="Skip Step 6 (topology SVG/PDF graph generation)")
+    parser.add_argument("--skip-image", action="store_true",
+                        help="Skip Step 7 (representative image generation)")
+    parser.add_argument("--presentation-title", default="Data Generation for CyberBattleSim — Current Status",
+                        help="Title for the Beamer presentation")
     parser.add_argument("--user-prompt", default="",
                         help="Natural-language request that led to this scenario (saved to user_prompt.txt)")
+    parser.add_argument("--append-train", type=int, default=0,
+                        help="Add N more train scenarios to existing output instead of regenerating (keeps existing scenarios intact)")
+    parser.add_argument("--no-expand", action="store_true",
+                        help="Skip topology expansion (step 2b) — use original scenario YAML as-is for Phase 2")
     args = parser.parse_args()
 
     try:
@@ -1085,10 +1227,15 @@ def main() -> None:
         runner = PipelineRunner(
             config_path,
             dataset_root,
-            target_score   = args.target_score,
-            max_bfs_rounds = args.max_bfs_rounds,
-            min_solve_rate = args.min_solve_rate,
-            user_prompt    = args.user_prompt,
+            target_score    = args.target_score,
+            max_bfs_rounds  = args.max_bfs_rounds,
+            min_solve_rate  = args.min_solve_rate,
+            user_prompt     = args.user_prompt,
+            append_train    = args.append_train,
+            expand_topology = not args.no_expand,
+            skip_phase2_report = args.skip_phase2_report,
+            skip_graphs        = args.skip_graphs,
+            skip_image         = args.skip_image,
         )
         ok = runner.run()
         log_paths.append(runner.log_path)
@@ -1099,6 +1246,12 @@ def main() -> None:
         exec_log = dataset_root / "logs" / \
             f"executive_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         run_executive_report(dataset_root, args.exec_report_title, exec_log)
+
+    if not args.skip_presentation and log_paths:
+        pres_log = dataset_root / "logs" / \
+            f"presentation_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        configs_root = REPO_ROOT / "data" / "scenarios"
+        run_presentation_report(dataset_root, configs_root, args.presentation_title, pres_log)
 
     if failed:
         print(f"\n  FAILED domains: {', '.join(failed)}", file=sys.stderr)

@@ -1,84 +1,199 @@
-# Agent 4: S_Identity — Active Directory Specialist
+# S_Identity - Active Directory and Identity Specialist
 
-**Zones:** Z1 Server Farm (AD protocol layer)  
-**CVE source:** `windows_cves.json` (AD techniques subset)  
-**Terminal goal (standalone):** `DomainController` (value 10000, is_goal: true)
+This file is the authoritative prompt reference for `s_identity` scenario generation.
+It is aligned to `/home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml`.
 
-**Scope:** AD protocol abuse requires recognizing `(DomainJoined, ADCS_present, SPN_count, delegation_type)` — completely different input features from the memory-address/OS-version features that drive S_Windows RCE selection. S_Identity does not probe OS versions or use memory exploits.
+## Role
 
----
+Exploit Active Directory, Kerberos, LDAP, ADCS, delegation, certificate, and domain-control weaknesses.
 
-## Action Types
+Domain boundary: Domain controllers, ADCS, Kerberos, LDAP/LDAPS, service tickets, delegation, domain admin paths, and identity infrastructure.
 
-| CBS Action Category | type | Allowed? | Rationale |
-|--------------------|------|----------|-----------|
-| `probe` vulnerabilities | — | ❌ No | Rely on S_Windows / S_Recon to establish OS and domain context |
-| `remote_access` solvability | REMOTE | ✅ Yes | AS-REP Roasting (no creds needed), Kerberoasting (domain creds), coercion attacks |
-| `remote_access` solvability | LOCAL | ✅ Yes | NTLM relay, pass-the-hash, token impersonation (require foothold) |
-| `credential_leak` solvability | — | ❌ No | S_Recon |
-| `discovery` solvability | — | ❌ No | S_Recon |
-| `goal_access` solvability | LOCAL | ✅ Yes | DCSync, NTDS dump, Golden Ticket — require domain-admin or DC access |
+Training scenarios for this specialist must be specialist-style fixed-pair compatible scenarios. In meta scenarios, the same collections define the specialist's usable action and observation surface.
 
----
+## Fixed Action Collection
 
-## Vulnerabilities
+The specialist has exactly 50 actions:
 
-### Remote Access Vulnerabilities (type: REMOTE — usable from network without prior local access)
-| Name | Technique / CVE | SR | Service | Attack |
-|------|----------------|----|---------|-|
-| `Solvability.ASREPRoasting` | AD technique | 0.55 | DomainController | Pre-auth disabled accounts — TGT request without creds |
-| `Solvability.Kerberoasting` | AD technique | 0.60 | DomainController | SPN enumeration + TGS request → offline crack |
-| `Solvability.PrinterBug_Coercion` | AD technique | 0.85 | PrintServer | MS-RPRN coerce machine auth → relay |
-| `Solvability.PetitPotam` | AD technique | 0.75 | DomainController | MS-EFSRPC coerce machine auth → relay |
-| `Solvability.UnconstrainedDelegation` | AD technique | 0.65 | DomainController | Abuse TGT cached in memory of delegated server |
-| `Solvability.ShadowCredentials` | AD technique | 0.60 | DomainController | msDS-KeyCredentialLink → PKINIT auth |
+| Action kind | Count |
+|---|---:|
+| Local vulnerabilities | 15 |
+| Remote vulnerabilities | 16 |
+| Connect ports | 19 |
+| Total | 50 |
 
-### Local Access Vulnerabilities (type: LOCAL — require domain foothold)
-| Name | Technique / CVE | SR | Service | Attack |
-|------|----------------|----|---------|-|
-| `Solvability.PassTheHash` | AD technique | 0.65 | All Windows nodes | NTLM hash reuse without cracking |
-| `Solvability.NTLM_Relay_LDAP` | AD technique | 0.58 | FileServer, MSSQLServer | Relay NTLM auth to LDAP → write AD attributes |
-| `Solvability.ZeroLogon` | CVE-2020-1472 | 0.70 | DomainController | Netlogon machine account password reset |
-| `Solvability.ConstrainedDelegation_S4U` | AD technique | 0.60 | IISServer | S4U2Self/S4U2Proxy impersonation |
-| `Solvability.RBCD_Attack` | AD technique | 0.55 | All Windows nodes | Resource-based constrained delegation write → impersonation |
-| `Solvability.SilverTicket` | AD technique | 0.70 | MSSQLServer, FileServer | Forged service ticket → local access without DC |
-| `Solvability.TokenImpersonation` | AD technique | 0.52 | All Windows nodes | SeImpersonatePrivilege → token theft |
+### Local Vulnerabilities
 
-### Goal Access Vulnerabilities (type: LOCAL — require domain-admin or DC-level access)
-| Name | Technique / CVE | SR | Service | What it achieves |
-|------|----------------|----|---------|-|
-| `Solvability.DCSync` | AD technique | 0.60 | DomainController | Mimic DC replication → dump all NTLM hashes |
-| `Solvability.NTDS_Dump` | AD technique | 0.60 | DomainController | VSS shadow copy → ntds.dit + SYSTEM hive |
-| `Solvability.GoldenTicket` | AD technique | 0.55 | DomainController | KRBTGT hash → forged TGT; valid 10 years |
-| `Solvability.ADCS_ESC1` | CVE-2022-26923 | 0.60 | ADCS_Server | Misconfigured cert template → domain admin cert |
-| `Solvability.ADCS_ESC6` | AD technique | 0.60 | ADCS_Server | EDITF_ATTRIBUTESUBJECTALTNAME2 → arbitrary SAN |
-| `Solvability.DCShadow` | AD technique | 0.60 | DomainController | Rogue DC replication → inject AD objects |
-| `Solvability.DSRM_Abuse` | AD technique | 0.70 | DomainController | DSRM password sync → persistent local admin |
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.PassTheHash` |
+| 1 | `Solvability.NTLM_Relay_LDAP` |
+| 2 | `Solvability.ZeroLogon` |
+| 3 | `Solvability.ConstrainedDelegation_S4U` |
+| 4 | `Solvability.RBCD_Attack` |
+| 5 | `Solvability.SilverTicket` |
+| 6 | `Solvability.TokenImpersonation` |
+| 7 | `Solvability.DCSync` |
+| 8 | `Solvability.NTDS_Dump` |
+| 9 | `Solvability.GoldenTicket` |
+| 10 | `Solvability.ADCS_ESC1` |
+| 11 | `Solvability.ADCS_ESC6` |
+| 12 | `Solvability.DCShadow` |
+| 13 | `Solvability.DSRM_Abuse` |
+| 14 | `Solvability.ADCS_ESC8` |
 
----
+### Remote Vulnerabilities
 
-## Services and Ports
+| Slot | Identifier |
+|---:|---|
+| 0 | `Solvability.ASREPRoasting` |
+| 1 | `Solvability.Kerberoasting` |
+| 2 | `Solvability.PrinterBug_Coercion` |
+| 3 | `Solvability.PetitPotam` |
+| 4 | `Solvability.UnconstrainedDelegation` |
+| 5 | `Solvability.ShadowCredentials` |
+| 6 | `Solvability.noPac` |
+| 7 | `Solvability.Certifried` |
+| 8 | `Solvability.ZeroLogon` |
+| 9 | `Solvability.AD_Services_EOP` |
+| 10 | `Solvability.NetNTLMv2_Downgrade` |
+| 11 | `Solvability.Kerberos_EOP_2` |
+| 12 | `Solvability.LSASS_EOP_AD` |
+| 13 | `Solvability.noPac_2` |
+| 14 | `Solvability.Kerberos_EOP` |
+| 15 | `Solvability.MSAA_Priv` |
 
-| Service | Primary Ports | Protocol | OS | GLOBALTECH Zone |
-|---------|--------------|----------|----|----------------|
-| `DomainController` | 88, 389, 636, 445, 3268, 53 | Kerberos, LDAP, LDAPS, SMB, GC, DNS | Win Server 2019/2022 | Z1 Server Farm |
-| `ADCS_Server` | 443, 80, 135 | HTTPS, HTTP, RPC (enrollment) | Win Server 2019 | Z1 Server Farm |
-| `MSSQLServer` | 1433, 445 | MSSQL, SMB | Win Server 2019 | Z1 Server Farm |
-| `FileServer` | 445, 139 | SMB, NetBIOS | Win Server | Z1 Server Farm |
-| `IISServer` | 80, 443 | HTTP, HTTPS | Win Server | Z1 Server Farm |
-| `PrintServer` | 445 | SMB (MS-RPRN) | Win Server | Z1 Server Farm |
+### Connect Ports
 
----
+| Slot | Identifier |
+|---:|---|
+| 0 | `SSH` |
+| 1 | `HTTP` |
+| 2 | `HTTPS` |
+| 3 | `SMB` |
+| 4 | `RDP` |
+| 5 | `WinRM` |
+| 6 | `LDAP` |
+| 7 | `LDAPS` |
+| 8 | `FTP` |
+| 9 | `SMTP` |
+| 10 | `DNS` |
+| 11 | `MSSQL` |
+| 12 | `MySQL` |
+| 13 | `VNC` |
+| 14 | `Telnet` |
+| 15 | `SNMP` |
+| 16 | `NetBIOS` |
+| 17 | `Kerberos` |
+| 18 | `WMI` |
 
-## Goal Specification (Standalone)
+## Observation Context Collection
 
-```yaml
-goal_config:
-  num_goals: 1
-  selection_strategy: diverse
+The scenario generator should preferentially use these service and property identifiers for this specialist. These are not extra actions; they are the specialist's observation context and vocabulary guidance.
 
-SalesWorkstation:  value: 1000   is_goal: false   # Entry handoff from S_Windows
-MSSQLServer:       value: 3500   is_goal: false   # Mid tier (SilverTicket target)
-ADCS_Server:       value: 6500   is_goal: false   # Near-goal (ESC1 chain reward)
-DomainController:  value: 10000  is_goal: true    # TERMINAL GOAL (DCSync)
-```
+| Context type | Count |
+|---|---:|
+| Service IDs | 29 |
+| Property IDs | 48 |
+
+### Service IDs
+
+| Slot | Identifier |
+|---:|---|
+| 0 | `DomainController` |
+| 1 | `MSSQLServer` |
+| 2 | `FileServer` |
+| 3 | `ExchangeServer` |
+| 4 | `PrintServer` |
+| 5 | `IISServer` |
+| 6 | `SharePointServer` |
+| 7 | `RDGateway` |
+| 8 | `HyperVHost` |
+| 9 | `MSMQServer` |
+| 10 | `SalesWorkstation` |
+| 11 | `FinanceWorkstation` |
+| 12 | `RnDWorkstation` |
+| 13 | `AdminWorkstation` |
+| 14 | `ADCS_Server` |
+| 15 | `CyberArkPAM` |
+| 16 | `ldap_svc` |
+| 17 | `ldaps_svc` |
+| 18 | `kadmind` |
+| 19 | `samba` |
+| 20 | `lsass` |
+| 21 | `winlogon` |
+| 22 | `dsapiservice` |
+| 23 | `kdc` |
+| 24 | `adcs_svc` |
+| 25 | `certsvc` |
+| 26 | `exchange_svc` |
+| 27 | `mssql_svc` |
+| 28 | `wmi_svc` |
+
+### Property IDs
+
+| Slot | Identifier |
+|---:|---|
+| 0 | `Windows` |
+| 1 | `Win2008` |
+| 2 | `Win2012` |
+| 3 | `Win2016` |
+| 4 | `Win2019` |
+| 5 | `Win2022` |
+| 6 | `Workstation` |
+| 7 | `AdminWorkstation` |
+| 8 | `FileServer` |
+| 9 | `PrintServer` |
+| 10 | `MailServer` |
+| 11 | `DatabaseServer` |
+| 12 | `MSSQLServer` |
+| 13 | `DomainController` |
+| 14 | `ADCS` |
+| 15 | `ADFS` |
+| 16 | `LDAPServer` |
+| 17 | `RadiusServer` |
+| 18 | `IdentityProvider` |
+| 19 | `AuthServer` |
+| 20 | `CertAuthority` |
+| 21 | `ADIntegrated` |
+| 22 | `CloudInstance` |
+| 23 | `AWS` |
+| 24 | `Unpatched` |
+| 25 | `Misconfigured` |
+| 26 | `DomainJoined` |
+| 27 | `DomainAdmin` |
+| 28 | `LocalAdmin` |
+| 29 | `Kerberoastable` |
+| 30 | `ASREProastable` |
+| 31 | `NoLAPS` |
+| 32 | `UnconstrainedDelegation` |
+| 33 | `ZeroLogonVulnerable` |
+| 34 | `NTLMRelayable` |
+| 35 | `IISServer` |
+| 36 | `WebServer` |
+| 37 | `AppServer` |
+| 38 | `HyperVHost` |
+| 39 | `MSMQServer` |
+| 40 | `BackupServer` |
+| 41 | `Serverless` |
+| 42 | `CloudRDS` |
+| 43 | `VPN` |
+| 44 | `Bastion` |
+| 45 | `ModernWorkstation` |
+| 46 | `DeveloperWorkstation` |
+| 47 | `LegacyWorkstation` |
+
+## Generation Rules
+
+- Use only identifiers from this file and the shared global vocabulary.
+- Do not invent probe actions such as `Remote.Probe.*`.
+- Do not use legacy scenario-only identifiers such as `External.*` or `Local.*`.
+- Do not use off-vocabulary ports such as `BGP` or `Redis`; represent those concepts through service IDs or properties when needed.
+- Every vulnerability emitted for this specialist must be one of the local or remote IDs listed above.
+- Connect actions are represented only by the listed port names.
+- Credentials are runtime objects, not vocabulary entries. They should target one of the listed services/ports and support valid fixed-pair connect actions.
+- Multi-goal scenarios are allowed, but specialist actions must remain inside this 50-action collection.
+
+## Scenario Intent
+
+Use identity-specific local and remote actions to move from a domain foothold to domain-level control.
