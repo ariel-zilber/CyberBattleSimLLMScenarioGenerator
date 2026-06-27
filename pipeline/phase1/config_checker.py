@@ -525,6 +525,132 @@ def check_agent_category_allowlist(cfg: dict, catalog: Optional[Dict[str, Set[st
 
 
 # ---------------------------------------------------------------------------
+# Check 4c — Specialist vocabulary coverage
+# ---------------------------------------------------------------------------
+
+_AGENT_SPEC_NAMES = {
+    "S_Network":  "s_network",
+    "S_Linux":    "s_linux",
+    "S_Windows":  "s_windows",
+    "S_Identity": "s_identity",
+    "S_Lateral":  "s_lateral",
+}
+
+_AGENTS_DIR = _REPO_ROOT / "prompts" / "reference" / "agents"
+
+
+def _load_spec_vulns(agent: str) -> Tuple[List[str], List[str], List[str]]:
+    """Return (local_vulns, remote_vulns, connect_ports) from the agent spec markdown."""
+    spec_name = _AGENT_SPEC_NAMES.get(agent)
+    if not spec_name:
+        return [], [], []
+    spec_path = _AGENTS_DIR / f"{spec_name}.md"
+    if not spec_path.is_file():
+        return [], [], []
+
+    text = spec_path.read_text()
+    sections = re.split(r"###\s+", text)
+
+    local_vulns: List[str] = []
+    remote_vulns: List[str] = []
+    connect_ports: List[str] = []
+    for section in sections:
+        if section.startswith("Local"):
+            local_vulns = re.findall(r"\|\s*\d+\s*\|\s*`(Solvability\.[^`]+)`", section)
+        elif section.startswith("Remote"):
+            remote_vulns = re.findall(r"\|\s*\d+\s*\|\s*`(Solvability\.[^`]+)`", section)
+        elif section.startswith("Connect"):
+            connect_ports = re.findall(r"\|\s*\d+\s*\|\s*`([^`]+)`", section)
+
+    return local_vulns, remote_vulns, connect_ports
+
+
+_SUCCESS_RATE_FLOOR = 0.05  # below this is functionally dead gradient
+
+def check_specialist_vocab_coverage(cfg: dict) -> List[str]:
+    """Every local/remote vuln and connect port in the agent spec must appear in the config.
+
+    Sub-0.05 success_rate is treated as absent — it produces insufficient gradient
+    signal (~150 positive hits per 3000 attempts, below stable Q-value estimation).
+    """
+    issues: List[str] = []
+    agent = cfg.get("metadata", {}).get("agent", "")
+    if agent not in _AGENT_SPEC_NAMES:
+        return issues  # Meta or unknown — skip
+
+    local_spec, remote_spec, port_spec = _load_spec_vulns(agent)
+    if not local_spec and not remote_spec:
+        issues.append(
+            f"[vocab-coverage] Could not load agent spec for '{agent}' "
+            f"from {_AGENTS_DIR} — coverage check skipped"
+        )
+        return issues
+
+    # Collect all Solvability.* names with valid success_rate
+    used: Set[str] = set()
+    low_rate: List[str] = []
+    solv = cfg.get("solvability_vulnerabilities", {})
+    for category, vulns in solv.items():
+        if not isinstance(vulns, list):
+            continue
+        for v in vulns:
+            name = v.get("name", "")
+            if not name.startswith("Solvability."):
+                continue
+            rate = v.get("success_rate", v.get("probability", 1.0))
+            try:
+                rate = float(rate)
+            except (TypeError, ValueError):
+                rate = 1.0
+            if rate < _SUCCESS_RATE_FLOOR:
+                low_rate.append(f"{name} (success_rate={rate})")
+            else:
+                used.add(name)
+
+    for v in low_rate:
+        issues.append(
+            f"[vocab-coverage] Vuln {v} has success_rate below {_SUCCESS_RATE_FLOOR} "
+            f"— treated as absent (dead gradient). Raise to >= {_SUCCESS_RATE_FLOOR}."
+        )
+
+    missing_local  = [v for v in local_spec  if v not in used]
+    missing_remote = [v for v in remote_spec if v not in used]
+
+    for v in missing_local:
+        issues.append(
+            f"[vocab-coverage] Local action '{v}' is in the {agent} spec "
+            f"but absent from this config — that action slot will be dead in training"
+        )
+    for v in missing_remote:
+        issues.append(
+            f"[vocab-coverage] Remote action '{v}' is in the {agent} spec "
+            f"but absent from this config — that action slot will be dead in training"
+        )
+
+    # Check connect port coverage — every port must appear as a service port
+    if port_spec:
+        all_service_ports: Set[str] = set()
+        for svc in cfg.get("services", {}).values():
+            port_val = svc.get("port", "")
+            if port_val:
+                all_service_ports.add(str(port_val))
+        missing_ports = [p for p in port_spec if p not in all_service_ports]
+        for p in missing_ports:
+            issues.append(
+                f"[vocab-coverage] Connect port '{p}' is in the {agent} spec "
+                f"but no service in this config uses it — that connect slot will be dead in training"
+            )
+        if not missing_ports:
+            ok(f"vocab-coverage: all {len(port_spec)} connect port slots covered")
+
+    if not missing_local and not missing_remote and not low_rate:
+        total = len(local_spec) + len(remote_spec)
+        ok(f"vocab-coverage: all {total} specialist vuln slots covered at success_rate >= {_SUCCESS_RATE_FLOOR}")
+
+    return issues
+
+
+# ---------------------------------------------------------------------------
 # Check 5 — Constraint soundness
 # ---------------------------------------------------------------------------
 
@@ -701,6 +827,7 @@ def main():
         ("Vulnerability coverage",     check_vulnerability_coverage(cfg)),
         ("Agent-category allowlist",   check_agent_category_allowlist(cfg, catalog)),
         ("Constraint soundness",       check_constraints(cfg)),
+        ("Specialist vocab coverage",  check_specialist_vocab_coverage(cfg)),
     ]
     depth_issues, depth_report = check_attack_flow_depth(cfg)
 
@@ -708,7 +835,8 @@ def main():
     ERROR_KEYWORDS = ["UNREACHABLE", "unsolvable", "not defined", "not in identifiers",
                       "is missing", "must be", "breach_node", "incorrect category pairing",
                       "vulnerability_catalog.md", "orphaned property",
-                      "metadata block", "metadata.", "AP-022", "AP-023"]
+                      "metadata block", "metadata.", "AP-022", "AP-023",
+                      "vocab-coverage", "dead in training"]
     for check_name, issues in checks:
         for issue in issues:
             if any(k.lower() in issue.lower() for k in ERROR_KEYWORDS):

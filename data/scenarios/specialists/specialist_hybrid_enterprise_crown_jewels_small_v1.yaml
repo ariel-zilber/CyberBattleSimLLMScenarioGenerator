@@ -1,0 +1,1123 @@
+metadata:
+  scenario_id: SPECIALIST-SPECIALIST-META-HYBRID-ENTERPRISE-CROWN-JEWELS-SMALL-V1
+  agent: Meta
+  training_mode: specialist_meta
+  zones:
+  - Z4_InternetEdge
+  - Z2_HQEdge
+  - Z1_HQVLANs
+  - Z1_ServerFarm
+  - Z8_KeyMgmt
+  terminal_goal: CyberArkPAM
+  intermediate_goals:
+  - name: DomainController
+    value: 6000
+    reason: 'High-value intermediate hub — owning DC unlocks Z8 path via ADCS cert
+      but episode does NOT terminate here. Agent must learn to continue to Z8.
+
+      '
+  - name: ftpd
+    value: 1500
+    reason: S_Linux milestone — Linux artifact/file server compromised; credential
+      extraction enables S_Identity DC path
+  - name: AdminWorkstation
+    value: 2500
+    reason: S_Windows + S_Lateral milestone — Windows foothold established via credential
+      relay; gates ADCS path to DomainController
+  node_range:
+  - 35
+  - 50
+  attack_path:
+  - Probe — fingerprint WAF in Z4 (breach node, public IP 203.0.113.5)
+  - Z4 exploit — PanOS_CMDInject (CVE-2024-3400, SR 0.90) on WAF → pivot to IPSAppliance
+  - Z4→Z2 — CiscoIOS_XE_PrivEsc (CVE-2023-20198, SR 0.90) on CiscoEdgeRouter (Z2)
+  - Z2→Z1 lateral — S_Lateral NTLM_Relay_SMB from PaloAltoFirewall into HQ VLANs
+  - Z1 VLAN RCE — WSD_RCE (CVE-2023-28250, SR 0.90) on AdminWorkstation
+  - Z1 credential harvest — Mimikatz_NTLM on owned workstations → service account
+    creds
+  - Z1 Server Farm — PrintNightmare (CVE-2021-34527, SR 0.88) on ExchangeServer
+  - S_Identity — Certifried (CVE-2022-26923, SR 0.88) + DCSync on DomainController
+    (value 6000, NOT terminal)
+  - DC→Z8 lateral — ADCS_CertSpoof_Lateral (CVE-2022-34691, SR 0.88) → CyberArkPAM
+  - TERMINAL — CyberArkPAM owned (value 10000, Z8)
+  notes: 'Specialist-meta dataset variant: Hybrid enterprise crown-jewel scenario
+    with Windows, identity, credential movement, perimeter, cloud, branch, and management-plane
+    context.
+
+    Size stratum: small; target node range 35-50; target goal count approximately
+    3.
+
+    Intended specialist emphasis: S_Windows, S_Identity, S_Linux. Optional/supporting
+    specialists: S_Network, S_Lateral.
+
+    Each generated instance should contain meaningful causal segments for 3-4 specialist
+    domains,
+
+    include at least one bridge role from S_Identity or S_Lateral, and preserve the
+    GLOBALTECH
+
+    reference architecture with external/perimeter, HQ edge, internal/server-farm,
+    branch/cloud,
+
+    and management or crown-jewel context. Decoys and supporting assets are allowed
+    but must not
+
+    dominate or block the main multi-specialist paths.
+
+    DomainController is is_goal: false (value 6000). Episode does NOT terminate there.
+
+    CyberArkPAM is is_goal: true (value 10000). CyberArkPAM must NOT have Unauthenticated
+    property.
+
+    Z8 (192.168.100.0/24) is only reachable after DC is owned (ADCS cert chain prerequisite).
+
+    The 4-domain inter_domain_constraints define the kill chain connectivity.
+
+    '
+  source_template: /home/ariel/Documents/thesis/CyberBattleSimLLMScenarioGenerator/data/scenarios/specialist_meta/meta_hybrid_enterprise_crown_jewels_small_v1.yaml
+  fixed_specialists:
+  - s_network
+  - s_linux
+  - s_windows
+  - s_identity
+  - s_lateral
+  vocabulary_source: /home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml
+config:
+  min_total_nodes: 35
+  max_total_nodes: 50
+  goal_config:
+    num_goals: 3
+    selection_strategy: diverse
+identifiers:
+  standard_ports:
+  - DNS
+  - HTTP
+  - HTTPS
+  - Kerberos
+  - LDAP
+  - LDAPS
+  - MSSQL
+  - RDP
+  - SMB
+  - SNMP
+  - SSH
+  - WinRM
+  - FTP
+  - VNC
+  - WMI
+  - NetBIOS
+  base_properties:
+  - breach_node
+  - ADCS
+  - AppServer
+  - CiscoIOS
+  - DatabaseServer
+  - DomainAdmin
+  - DomainController
+  - DomainJoined
+  - FileServer
+  - Firewall
+  - GlobalProtect
+  - IdentityProvider
+  - Kerberoastable
+  - Linux
+  - LocalAdmin
+  - MailServer
+  - Misconfigured
+  - NGFW
+  - NTLMRelayable
+  - NetworkDevice
+  - NoLAPS
+  - PANOS
+  - PaloAlto
+  - PrintServer
+  - Router
+  - SMB
+  - SNMP
+  - Unpatched
+  - WAF
+  - Win10
+  - Win2019
+  - Win2022
+  - Windows
+  - Workstation
+  - LegacyWorkstation
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: HTTPS
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.5
+  properties:
+  - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+  - HTTPS
+  - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.15
+  min_leaked_nodes: 2
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: 'OSINT and network scanning to enumerate public-facing infrastructure:
+        WAF, IPS, ISP router in Z4. Identifies Palo Alto GlobalProtect portal, IPS
+        management UI, and SNMP AS number for the GLOBALTECH enterprise.
+
+        '
+      cost: 0.5
+      success_rate: 0.85
+      reward: GLOBALTECH internet edge fingerprinted — Z4 WAF/IPS/ISPRouter identified,
+        PAN-OS version and GlobalProtect portal URL enumerated
+    credential_leak:
+      name: Solvability.SSH_PrivKey_Theft
+      type: LOCAL
+      description: 'Spear-phishing targeting GLOBALTECH employees with fake VPN /
+        GlobalProtect login portal. Harvests one VPN credential for initial Z4 foothold.
+
+        '
+      cost: 1.5
+      success_rate: 0.65
+      reward: GLOBALTECH VPN credential obtained via phishing — initial foothold credential
+        for GlobalProtect portal
+attack_flow:
+- source_pattern: WAF
+  targets:
+  - IPSAppliance
+  - ISPRouter
+- source_pattern: IPSAppliance
+  targets:
+  - PaloAltoFirewall
+- source_pattern: ISPRouter
+  targets:
+  - PaloAltoFirewall
+- source_pattern: PaloAltoFirewall
+  targets:
+  - CiscoEdgeRouter
+- source_pattern: CiscoEdgeRouter
+  targets:
+  - AdminWorkstation
+  - SalesWorkstation
+  - ftpd
+- source_pattern: AdminWorkstation
+  targets:
+  - ExchangeServer
+  - FileServer
+  - PrintServer
+- source_pattern: SalesWorkstation
+  targets:
+  - FileServer
+- source_pattern: ExchangeServer
+  targets:
+  - DomainController
+- source_pattern: FileServer
+  targets:
+  - DomainController
+- source_pattern: PrintServer
+  targets:
+  - DomainController
+- source_pattern: DomainController
+  targets:
+  - CyberArkPAM
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Solvability.PassTheHash
+    type: LOCAL
+    description: 'Credential relay across zone boundaries: NTLM hash capture via network
+      position, cached domain creds from LSASS, and service account tickets leaked
+      from compromised domain-joined nodes.
+
+      '
+    cost: 0.5
+    success_rate: 0.7
+    reward: Credentials relayed from {target} — domain or service account credential
+      obtained for zone crossing
+    node_probability: 0.25
+    target_coverage: 0.25
+    min_targets: 2
+    default_port: SMB
+  leak_neighbors:
+    name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: 'Multi-technique network discovery: ARP cache, SMB enumeration, LDAP
+      queries, and SNMP walk to map adjacent hosts across zone boundaries.
+
+      '
+    cost: 0.5
+    success_rate: 0.85
+    reward: Adjacent node {target} discovered via SMB/ARP/LDAP cross-zone enumeration
+    node_probability: 0.6
+    target_coverage: 0.5
+    min_targets: 2
+probe_vulnerabilities:
+- name: Solvability.CiscoIOS_RPKI
+  os: Linux
+  type: REMOTE
+  description: Banner grab, SNMP OID walk, and web UI fingerprint to identify network
+    device vendor, firmware version, and management interface exposure.
+  cost: 0.5
+  success_rate: 0.85
+- name: Solvability.WSD_RCE
+  os: Windows
+  type: REMOTE
+  description: SMB/RDP banner, NetBIOS name, and LDAP signing check to identify Windows
+    OS version, patch level, and domain membership.
+  cost: 0.5
+  success_rate: 0.9
+solvability_vulnerabilities:
+  remote_access:
+  - name: Solvability.PanOS_CMDInject
+    type: REMOTE
+    description: 'CVE-2024-3400 — PAN-OS GlobalProtect OS command injection. CVSS
+      10.0. Unauthenticated RCE via crafted SESSID cookie in GlobalProtect gateway.
+      Achieves root shell on Palo Alto WAF/NGFW appliance in Z4.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: PAN-OS GlobalProtect RCE (CVE-2024-3400) achieved — root shell on WAF,
+      Z4 foothold established
+    match_properties:
+    - Firewall
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    probability: 0.85
+  - name: Solvability.PanOS_TOCTOU
+    type: REMOTE
+    description: 'CVE-2021-3054 — PAN-OS Web UI TOCTOU race condition. CVSS 7.2. Authenticated
+      admin command injection through management UI race window.
+
+      '
+    cost: 1.5
+    success_rate: 0.85
+    reward: PAN-OS TOCTOU Web UI exploit (CVE-2021-3054) — management shell on PaloAlto
+      appliance
+    match_properties:
+    - Firewall
+    - PaloAlto
+    - PANOS
+    probability: 0.7
+  - name: Solvability.CiscoIOS_XE_PrivEsc
+    type: REMOTE
+    description: 'CVE-2023-20198 — Cisco IOS XE Web UI privilege escalation. CVSS
+      10.0. Unauthenticated creation of high-privilege account via HTTP management
+      interface on Cisco IOS XE routers (CiscoEdgeRouter Z2).
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cisco IOS XE priv-esc (CVE-2023-20198) — privileged account created on
+      CiscoEdgeRouter, Z2 breached
+    match_properties:
+    - Router
+    - CiscoIOS
+    - NetworkDevice
+    - Unpatched
+    probability: 0.8
+  - name: Solvability.WSD_RCE
+    type: REMOTE
+    description: 'CVE-2023-28250 — Windows Pragmatic General Multicast (PGM) RCE.
+      CVSS 9.8. Unauthenticated stack overflow via Windows Socket Driver on Win10/Win11
+      workstations with PGM service enabled.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: WSD RCE (CVE-2023-28250) — SYSTEM shell on AdminWorkstation/SalesWorkstation
+      in Z1 VLANs
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.75
+  - name: Solvability.ProxyLogon
+    type: REMOTE
+    description: 'CVE-2023-23397 — Outlook NTLM credential relay. CVSS 9.8. Malicious
+      calendar appointment forces Outlook to authenticate to attacker-controlled SMB
+      share, leaking NTLMv2 hash.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Outlook NTLM relay (CVE-2023-23397) — domain user NTLMv2 hash captured
+      from AdminWorkstation
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.7
+  - name: Solvability.Certifried
+    type: REMOTE
+    description: 'CVE-2022-26923 — Certifried ADCS privilege escalation. CVSS 8.8.
+      Manipulate dNSHostName attribute to impersonate DC, enroll DA cert via ADCS.
+
+      '
+    cost: 1.5
+    success_rate: 0.88
+    reward: Certifried ADCS privesc (CVE-2022-26923) — DA certificate obtained, domain
+      admin TGT via PKINIT
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.75
+  - name: Solvability.noPac
+    type: REMOTE
+    description: 'CVE-2021-42287 — noPac SAM Account Name impersonation. CVSS 7.5.
+      Domain user impersonates DC via sAMAccountName manipulation for DA TGT.
+
+      '
+    cost: 1.5
+    success_rate: 0.75
+    reward: noPac SAM impersonation (CVE-2021-42287) — DA TGT obtained via Kerberos
+      name spoofing
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.Citrix_Bleed
+    type: REMOTE
+    description: CVE-2023-4966 — Citrix NetScaler sensitive information disclosure
+      leading to session hijack. CVSS 9.4. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Citrix Bleed session token leak — authenticated session hijacked on Citrix
+      ADC/Gateway
+    match_properties:
+    - NetworkDevice
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.Citrix_ADC_RCE
+    type: REMOTE
+    description: CVE-2019-19781 — Citrix ADC/Gateway path traversal RCE. CVSS 9.8.
+      CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Citrix ADC RCE — unauthenticated code execution on Citrix NetScaler appliance
+    match_properties:
+    - NetworkDevice
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.Netgear_RCE
+    type: REMOTE
+    description: CVE-2021-34991 — Netgear router pre-auth buffer overflow RCE. CVSS
+      9.8.
+    cost: 1.0
+    success_rate: 0.85
+    reward: Netgear router RCE — unauthenticated code execution on edge router
+    match_properties:
+    - Router
+    - NetworkDevice
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.HTTP3_RCE
+    type: REMOTE
+    description: CVE-2022-22025 — Windows HTTP3/QUIC stack RCE. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Windows HTTP3 RCE — kernel-level code execution via QUIC stack overflow
+    match_properties:
+    - Windows
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.iSCSI_RCE
+    type: REMOTE
+    description: CVE-2021-26432 — Windows iSCSI initiator RCE. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Windows iSCSI RCE — SYSTEM shell via iSCSI initiator buffer overflow
+    match_properties:
+    - Windows
+    - FileServer
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.QueueJumper
+    type: REMOTE
+    description: CVE-2023-21554 — Windows MSMQ QueueJumper RCE. CVSS 9.8. CISA KEV.
+    cost: 1.0
+    success_rate: 0.85
+    reward: QueueJumper MSMQ RCE — unauthenticated SYSTEM shell via MSMQ service port
+      1801
+    match_properties:
+    - Windows
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.HyperV_RCE
+    type: REMOTE
+    description: CVE-2021-28476 — Hyper-V guest to host RCE via vmswitch.sys. CVSS
+      9.9.
+    cost: 1.5
+    success_rate: 0.9
+    reward: Hyper-V guest escape RCE — hypervisor host code execution from guest VM
+    match_properties:
+    - Windows
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.Zlib_IntOverflow
+    type: REMOTE
+    description: CVE-2022-37434 — zlib heap buffer overflow via inflate in one-shot
+      mode. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: zlib integer overflow RCE — code execution via crafted compressed data
+      stream
+    match_properties:
+    - Linux
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.OpenEXR_OOB_Write
+    type: REMOTE
+    description: CVE-2021-3933 — OpenEXR integer overflow OOB write. CVSS 7.8.
+    cost: 1.0
+    success_rate: 0.55
+    reward: OpenEXR OOB write — code execution via malicious EXR image file processing
+    match_properties:
+    - Linux
+    - Unpatched
+    probability: 0.6
+  - name: Solvability.Schtasks_EOP_4
+    type: LOCAL
+    description: Windows scheduled task EOP via token hijacking from high-privilege
+      task process.
+    cost: 1.0
+    success_rate: 0.72
+    reward: Schtasks EOP v4 — SYSTEM via token hijack from privileged scheduled task
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.6
+    target_coverage: 0.3
+    min_targets: 1
+  credential_leak:
+  - name: Solvability.Mimikatz_NTLM
+    type: LOCAL
+    description: Dump NTLM hashes from LSASS memory using Mimikatz sekurlsa::logonpasswords
+      on compromised domain-joined Windows hosts.
+    cost: 0.5
+    success_rate: 0.65
+    reward: NTLM hashes dumped from LSASS — domain user and service account hashes
+      obtained
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.22
+  - name: Solvability.NetworkDevice_DefaultCreds
+    type: LOCAL
+    description: Default admin credentials (admin/admin) on unmanaged network devices
+      — extremely common on Z4/Z2 perimeter appliances.
+    cost: 0.5
+    success_rate: 0.75
+    reward: Default credentials extracted from network device — admin access obtained
+      for perimeter appliance
+    match_properties:
+    - NetworkDevice
+    probability: 0.22
+  - name: Solvability.ConfigBackup_Exfil
+    type: LOCAL
+    description: Read TFTP/FTP running-config backup from compromised router/firewall
+      — exposes all interface IPs, routing tables, and ACL rules.
+    cost: 0.5
+    success_rate: 0.65
+    reward: Running-config exfiltrated from network device — full topology and ACL
+      map obtained
+    match_properties:
+    - Router
+    - NetworkDevice
+    probability: 0.22
+  - name: Solvability.Kerberoasting
+    type: LOCAL
+    description: Request TGS tickets for SPN-registered service accounts. Offline
+      hash cracking reveals service account plaintext passwords.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Kerberoasting TGS tickets cracked — service account password exposed for
+      lateral movement
+    match_properties:
+    - Windows
+    - Kerberoastable
+    - DomainJoined
+    probability: 0.22
+  discovery:
+  - name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: BloodHound/SharpHound AD enumeration — maps all trust relationships,
+      admin groups, Kerberoastable accounts, and ADCS paths to DA.
+    cost: 1.0
+    success_rate: 0.8
+    reward: BloodHound attack graph built — shortest path to DomainController and
+      Z8 identified
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.85
+  goal_access:
+  - name: Solvability.DCSync
+    type: LOCAL
+    description: DS-Replication-Get-Changes-All — Mimikatz dcsync on owned DomainController
+      to extract all NTLM hashes including krbtgt.
+    cost: 0.5
+    success_rate: 0.6
+    reward: DCSync complete — all domain NTLM hashes and krbtgt extracted from DomainController
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  - name: Solvability.GoldenTicket
+    type: LOCAL
+    description: Forge Kerberos Golden Ticket using extracted krbtgt NTLM hash — persistent
+      10-year domain admin TGT.
+    cost: 1.0
+    success_rate: 0.55
+    reward: Golden Ticket forged — persistent DA Kerberos TGT created using krbtgt
+      hash
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.65
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC1
+    type: LOCAL
+    description: ADCS ESC1 goal-stage — DA cert obtained from misconfigured template
+      → PKINIT DA auth → DCSync domain takeover.
+    cost: 0.5
+    success_rate: 0.6
+    reward: ADCS ESC1 domain takeover — DA cert PKINIT succeeded, DCSync and CyberArkPAM
+      access obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC8
+    type: LOCAL
+    description: Read all PAM secrets from CyberArkPAM vault — extracts all privileged
+      account credentials stored in the enterprise PAM solution.
+    cost: 0.5
+    success_rate: 0.55
+    reward: CyberArkPAM vault secrets dumped — all enterprise privileged account credentials
+      exfiltrated, TERMINAL GOAL achieved
+    match_properties:
+    - Linux
+    - AppServer
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  lateral_movement:
+  - name: Solvability.NTLM_Relay_SMB
+    type: REMOTE
+    description: 'CVE-2024-21410 — Exchange NTLM relay. CVSS 9.8. Exchange relays
+      client NTLM credentials to LDAP, enabling RBCD write to machine account for
+      domain admin escalation.
+
+      '
+    cost: 1.0
+    success_rate: 0.72
+    reward: Exchange NTLM relay (CVE-2024-21410) — RBCD written via Exchange relay,
+      DA path unlocked
+    match_properties:
+    - Windows
+    - MailServer
+    probability: 0.75
+  - name: Solvability.ADCS_CertSpoof_Lateral
+    type: LOCAL
+    description: 'CVE-2022-34691 — ADCS cert spoof for cross-zone relay. CVSS 8.8.
+      Use owned DC''s ADCS certificate to authenticate to CyberArkPAM in Z8 via PKINIT
+      chain — DC→Z8 crossing technique.
+
+      '
+    cost: 1.5
+    success_rate: 0.88
+    reward: ADCS CertSpoof lateral (CVE-2022-34691) — DC cert used for CyberArkPAM
+      Z8 auth, Z8 foothold established
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+  - name: Solvability.Exchange_RCE_Lateral_2
+    type: LOCAL
+    description: CVE-2022-41082 ProxyNotShell Exchange RCE — SYSTEM on Exchange via
+      PowerShell remoting.
+    cost: 1.0
+    success_rate: 0.85
+    reward: Exchange RCE lateral v2 — SYSTEM shell via ProxyNotShell PowerShell remoting
+    match_properties:
+    - Windows
+    - MailServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.MSSQL_RCE_Lateral
+    type: LOCAL
+    description: CVE-2022-35256 — MSSQL server RCE via crafted SSRP packet for lateral
+      movement.
+    cost: 1.0
+    success_rate: 0.88
+    reward: MSSQL RCE lateral — remote code execution on SQL Server for cross-zone
+      pivot
+    match_properties:
+    - Windows
+    - DatabaseServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.MSSQL_Privesc_Lateral
+    type: LOCAL
+    description: MSSQL service account privilege escalation for lateral movement via
+      impersonation.
+    cost: 1.0
+    success_rate: 0.8
+    reward: MSSQL privesc lateral — elevated SA account access via EXECUTE AS impersonation
+    match_properties:
+    - Windows
+    - DatabaseServer
+    - Misconfigured
+    probability: 0.65
+  - name: Solvability.LSA_Relay
+    type: LOCAL
+    description: LSA relay attack — relay LSARPC authentication for LDAP write privilege
+      escalation.
+    cost: 1.0
+    success_rate: 0.8
+    reward: LSA relay — LDAP write privilege obtained via relayed LSA authentication
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.65
+services:
+  IPSAppliance:
+    port: HTTPS
+    value: 800
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - NetworkDevice
+    - Unpatched
+    is_goal: false
+  ISPRouter:
+    port: HTTPS
+    value: 600
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Router
+    - NetworkDevice
+    - CiscoIOS
+    - Unpatched
+    - SNMP
+    is_goal: false
+  PaloAltoFirewall:
+    port: HTTPS
+    value: 1200
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - NGFW
+    - NetworkDevice
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - Unpatched
+    - NTLMRelayable
+    is_goal: false
+  CiscoEdgeRouter:
+    port: HTTPS
+    value: 2000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Router
+    - NetworkDevice
+    - CiscoIOS
+    - Unpatched
+    - SNMP
+    - DomainAdmin
+    is_goal: false
+  AdminWorkstation:
+    port: RDP
+    value: 1500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - LocalAdmin
+    - DomainAdmin
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  SalesWorkstation:
+    port: RDP
+    value: 800
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - Unpatched
+    is_goal: false
+  ExchangeServer:
+    port: HTTPS
+    value: 3500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - MailServer
+    - DomainJoined
+    - PrintServer
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  FileServer:
+    port: SMB
+    value: 2500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - FileServer
+    - DomainJoined
+    - Misconfigured
+    - SMB
+    - DatabaseServer
+    - Unpatched
+    is_goal: false
+  PrintServer:
+    port: SMB
+    value: 2000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - PrintServer
+    - DomainJoined
+    - Unpatched
+    is_goal: false
+  DomainController:
+    port: LDAP
+    value: 6000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2022
+    - DomainController
+    - DomainJoined
+    - ADCS
+    - DomainAdmin
+    - DatabaseServer
+    is_goal: false
+  CyberArkPAM:
+    port: HTTPS
+    value: 10000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - AppServer
+    - IdentityProvider
+    - DomainAdmin
+    - DatabaseServer
+    is_goal: true
+  WAFAppliance:
+    port: HTTPS
+    value: 500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - WAF
+    - NetworkDevice
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - Unpatched
+    - breach_node
+    is_goal: false
+  ftpd:
+    port: FTP
+    value: 600
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - FileServer
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  FinanceWorkstation:
+    port: NetBIOS
+    value: 400
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - LegacyWorkstation
+    - Workstation
+    - DomainJoined
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  wmi_svc:
+    port: WMI
+    value: 600
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - DomainJoined
+    - LocalAdmin
+    - Misconfigured
+    is_goal: false
+domains:
+- name: InternetEdge
+  subnet: 10.0.1.0/24
+  filler:
+  - IPSAppliance
+  mandatory_services:
+  - WAFAppliance
+  - IPSAppliance
+  - ISPRouter
+  groups:
+  - name: WAFs
+    service: WAFAppliance
+    min_count: 1
+    max_count: 3
+  - name: IPSAppliances
+    service: IPSAppliance
+    min_count: 1
+    max_count: 3
+  - name: ISPRouters
+    service: ISPRouter
+    min_count: 1
+    max_count: 2
+  constraints:
+  - source: WAFs
+    target: breach_node
+    relation: MUST_HAVE
+  - source: WAFs
+    target: IPSAppliances
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: WAFs
+    target: ISPRouters
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- name: HQEdge
+  subnet: 10.0.2.0/24
+  filler:
+  - PaloAltoFirewall
+  mandatory_services:
+  - PaloAltoFirewall
+  - CiscoEdgeRouter
+  groups:
+  - name: PaloAltoFirewalls
+    service: PaloAltoFirewall
+    min_count: 1
+    max_count: 3
+  - name: CiscoEdgeRouters
+    service: CiscoEdgeRouter
+    min_count: 1
+    max_count: 2
+  - name: ftpds
+    service: ftpd
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: PaloAltoFirewalls
+    target: CiscoEdgeRouters
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: CiscoEdgeRouters
+    target: ftpds
+    relation: MUST_CONNECT
+    protocol: FTP
+  - source: CiscoEdgeRouters
+    target: DomainAdmin
+    relation: MUST_HAVE
+- name: HQVLANs
+  subnet: 10.1.0.0/24
+  filler:
+  - SalesWorkstation
+  mandatory_services:
+  - AdminWorkstation
+  - SalesWorkstation
+  groups:
+  - name: AdminWorkstations
+    service: AdminWorkstation
+    min_count: 3
+    max_count: 20
+  - name: SalesWorkstations
+    service: SalesWorkstation
+    min_count: 5
+    max_count: 30
+  - name: FinanceWorkstations
+    service: FinanceWorkstation
+    min_count: 1
+    max_count: 4
+  - name: wmi_svcs
+    service: wmi_svc
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: AdminWorkstations
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: AdminWorkstations
+    target: SalesWorkstations
+    relation: MUST_CONNECT
+    protocol: SMB
+- name: ServerFarm
+  subnet: 10.1.10.0/24
+  filler:
+  - FileServer
+  mandatory_services:
+  - ExchangeServer
+  - FileServer
+  - PrintServer
+  - DomainController
+  groups:
+  - name: ExchangeServers
+    service: ExchangeServer
+    min_count: 2
+    max_count: 8
+  - name: FileServers
+    service: FileServer
+    min_count: 3
+    max_count: 15
+  - name: PrintServers
+    service: PrintServer
+    min_count: 1
+    max_count: 5
+  - name: DomainControllers
+    service: DomainController
+    min_count: 1
+    max_count: 4
+  constraints:
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: DatabaseServer
+    relation: MUST_HAVE
+  - source: ExchangeServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: FileServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: PrintServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+- name: KeyManagement
+  subnet: 192.168.100.0/24
+  filler:
+  - CyberArkPAM
+  mandatory_services:
+  - CyberArkPAM
+  groups:
+  - name: CyberArkPAMs
+    service: CyberArkPAM
+    min_count: 1
+    max_count: 2
+  constraints:
+  - source: CyberArkPAMs
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: CyberArkPAMs
+    target: DatabaseServer
+    relation: MUST_HAVE
+inter_domain_constraints:
+- source_domain: InternetEdge
+  target_domain: HQEdge
+  constraints:
+  - source: WAFs
+    target: PaloAltoFirewalls
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: ISPRouters
+    target: CiscoEdgeRouters
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- source_domain: HQEdge
+  target_domain: HQVLANs
+  constraints:
+  - source: CiscoEdgeRouters
+    target: AdminWorkstations
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: PaloAltoFirewalls
+    target: SalesWorkstations
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: SMB
+- source_domain: HQVLANs
+  target_domain: ServerFarm
+  constraints:
+  - source: AdminWorkstations
+    target: ExchangeServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AdminWorkstations
+    target: FileServers
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: AdminWorkstations
+    target: PrintServers
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: SalesWorkstations
+    target: FileServers
+    relation: MUST_CONNECT
+    protocol: SMB
+- source_domain: ServerFarm
+  target_domain: KeyManagement
+  constraints:
+  - source: DomainControllers
+    target: CyberArkPAMs
+    relation: MUST_CONNECT
+    protocol: HTTPS
+entry_points:
+- domain: InternetEdge
+  node: WAFs
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.5
+  auto_fix_enabled: true
+  auto_fix_strategies:
+  - add_remote_vulnerability_to_entry
+  - add_credential_leakage
+  - add_lateral_movement_vulnerabilities

@@ -305,121 +305,113 @@ REQUIREMENTS:
 @mcp.tool()
 def run_pipeline(
     config_path: str,
-    train_count: int = 5,
-    test_count: int = 2,
-    skip_fetch: bool = True,
+    target_score: float = 0.0,
+    max_bfs_rounds: int = 2,
+    min_solve_rate: float = 0.5,
+    skip_phase2_report: bool = False,
+    skip_graphs: bool = False,
+    user_prompt: str = "",
 ) -> Dict[str, Any]:
     """
-    Run the full generation + evaluation pipeline on a domain config YAML file.
+    Run the full CyberBattleSim pipeline on a domain config YAML.
 
-    This executes: config validation → scenario generation → quality evaluation.
-    Output is written to a timestamped folder under DATASET_ROOT/phase1/ (from .env).
+    Executes all steps: preflight static gate → Phase 1 validation →
+    Phase 2 scenario generation → BFS heuristic evaluation → LLM actor-critic
+    repair loop → reports.  MLflow tracking is started automatically when
+    MLFLOW_ENABLED=true in the environment.
 
     Args:
-        config_path: Path to the domain config YAML file. Can be absolute or
-            relative to the repo root. If only a domain name is given (e.g.,
-            "active_directory"), looks for data/<name>.yaml automatically.
-        train_count: Number of training scenarios to generate.
-        test_count: Number of test scenarios to generate.
-        skip_fetch: If True, skip the NVD/EPSS CVE fetch step (faster).
+        config_path: Path to the domain config YAML (absolute, repo-relative,
+            or bare domain name resolved under data/scenarios/).
+        target_score: Enable actor-critic repair loop — stop when LLM quality
+            score ≥ this value. 0 = single-pass (no repair loop).
+        max_bfs_rounds: Maximum BFS + repair iterations (default 2).
+        min_solve_rate: Minimum fraction of scenarios that must be solvable
+            before the BFS step is considered passing (default 0.5).
+        skip_phase2_report: Skip the EDA report and PDF figure generation step.
+        skip_graphs: Skip topology graph / PDF generation.
+        user_prompt: Optional natural-language description stored alongside
+            the config for provenance.
 
     Returns:
         Dict with keys:
-          - run_id: Unique identifier for this pipeline run
-          - output_dir: Path to the pipeline output directory
-          - config_errors: Number of config errors found
-          - config_warnings: Number of config warnings found
-          - scenarios_generated: Total number of generated scenarios
-          - scenarios_passing: Number of scenarios passing all thresholds
-          - summary: Human-readable pipeline report text
-          - evaluation: Structured evaluation metrics dict
-          - status: "success", "partial", or "failed"
+          - status: "success" | "partial" | "failed"
+          - domain: Config stem (e.g. "swin_serverfarm_standalone_v1")
+          - output_dir: DATASET_ROOT/<domain>/ — all outputs live here
+          - mlflow_run_id: MLflow run ID (empty string if tracking disabled)
+          - bfs_metrics: Aggregated BFS solve metrics dict (from bfs_metrics.json)
+          - quality_score: LLM critic score 0–10 (from quality_evaluation.json)
+          - pipeline_stdout: Last 3000 chars of stdout for quick inspection
+          - pipeline_stderr: Last 1000 chars of stderr
+          - returncode: Subprocess return code
     """
-    # Resolve config path
     p = Path(config_path)
     if not p.is_absolute():
-        # Try relative to repo root
         candidate = REPO_ROOT / p
         if not candidate.exists():
-            # Try data/ directory
+            candidate = DATA_DIR / p.name
+        if not candidate.exists():
             candidate = DATA_DIR / f"{config_path}.yaml"
         p = candidate
 
     if not p.exists():
         return {
             "status": "failed",
-            "error": f"Config file not found: {config_path}. "
-                     f"Available configs: {[f.stem for f in DATA_DIR.glob('*.yaml')]}",
+            "error": (
+                f"Config file not found: {config_path}. "
+                f"Available: {[f.stem for f in DATA_DIR.glob('**/*.yaml')][:20]}"
+            ),
         }
 
-    # Build unique run ID and output dir
-    run_id = f"{p.stem}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
-    out_dir = OUTPUT_ROOT / run_id
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Build pipeline/run.py command
+    cmd = [sys.executable, str(TOOLS_DIR / "run.py"), str(p)]
+    if target_score > 0:
+        cmd += ["--target-score", str(target_score)]
+    cmd += ["--max-bfs-rounds", str(max_bfs_rounds)]
+    cmd += ["--min-solve-rate", str(min_solve_rate)]
+    if skip_phase2_report:
+        cmd.append("--skip-phase2-report")
+    if skip_graphs:
+        cmd.append("--skip-graphs")
+    if user_prompt:
+        cmd += ["--user-prompt", user_prompt]
 
-    # Build pipeline command
-    cmd = [
-        sys.executable,
-        str(TOOLS_DIR / "phase1" / "pipeline.py"),
-        "--config",  str(p),
-        "--train",   str(train_count),
-        "--test",    str(test_count),
-        "--out-dir", str(out_dir.parent),  # phase1_pipeline.py appends domain name itself
-    ]
-    if skip_fetch:
-        cmd.append("--skip-fetch")
+    result = _run_subprocess(cmd, timeout=3600)
 
-    # Run pipeline
-    result = _run_subprocess(cmd, timeout=600)
+    # Locate output directory: DATASET_ROOT/<domain>/
+    domain = p.stem
+    domain_dir = DATASET_ROOT / domain
 
-    # The actual output directory has the domain name appended by phase1_pipeline.py
-    domain_out_dir = out_dir.parent / p.stem
-    if not domain_out_dir.exists():
-        domain_out_dir = out_dir
+    # Read structured outputs
+    bfs_metrics    = _load_json(domain_dir / "phase2" / domain / "bfs_metrics.json") or {}
+    quality_data   = _load_json(domain_dir / "phase2" / domain / "quality_evaluation.json") or {}
+    quality_score  = quality_data.get("overall_score", 0.0)
 
-    # Read outputs
-    check_data  = _load_json(domain_out_dir / "03_config_check.json") or {}
-    eval_data   = _load_json(domain_out_dir / "06_evaluation.json")   or {}
-    report_text = _read_file(domain_out_dir / "07_pipeline_report.txt")
+    # Extract MLflow run ID from stdout if present
+    mlflow_run_id = ""
+    for line in (result["stdout"] or "").splitlines():
+        if "mlflow run" in line.lower() or "run_id" in line.lower():
+            parts = line.split()
+            for part in parts:
+                if len(part) == 32 and part.isalnum():
+                    mlflow_run_id = part
+                    break
 
-    # Count results
-    scenarios      = eval_data.get("scenarios", [])
-    n_pass         = sum(1 for s in scenarios if s.get("passes", False))
-    n_total        = len(scenarios)
-    config_errors  = len(check_data.get("errors", []))
-    config_warnings= len(check_data.get("warnings", []))
-
-    # Compute aggregate metrics
-    mean_depth = (
-        round(sum(s.get("mean_goal_depth", 0) for s in scenarios) / n_total, 2)
-        if n_total else 0.0
+    status = "success" if result["returncode"] == 0 else (
+        "partial" if bfs_metrics else "failed"
     )
-    mean_cred = (
-        round(sum(s.get("cred_chain_ratio", 0) for s in scenarios) / n_total, 3)
-        if n_total else 0.0
-    )
-    solvable_count = sum(1 for s in scenarios if s.get("solvable", False))
-
-    status = "success" if (n_pass == n_total and n_total > 0 and config_errors == 0) else \
-             "partial" if (n_pass > 0 or n_total > 0) else "failed"
 
     return {
-        "run_id":              run_id,
-        "output_dir":          str(domain_out_dir.resolve()),
-        "config_path":         str(p.resolve()),
-        "config_errors":       config_errors,
-        "config_warnings":     config_warnings,
-        "config_error_list":   check_data.get("errors", []),
-        "config_warning_list": check_data.get("warnings", []),
-        "scenarios_generated": n_total,
-        "scenarios_passing":   n_pass,
-        "scenarios_solvable":  solvable_count,
-        "mean_goal_depth":     mean_depth,
-        "mean_cred_ratio":     mean_cred,
-        "summary":             report_text or result["stdout"],
-        "evaluation":          eval_data,
-        "status":              status,
-        "pipeline_stdout":     result["stdout"][-3000:] if result["stdout"] else "",
+        "status":           status,
+        "domain":           domain,
+        "output_dir":       str(domain_dir) if domain_dir.exists() else str(DATASET_ROOT),
+        "config_path":      str(p),
+        "mlflow_run_id":    mlflow_run_id,
+        "bfs_metrics":      bfs_metrics,
+        "quality_score":    quality_score,
+        "returncode":       result["returncode"],
+        "pipeline_stdout":  result["stdout"][-3000:] if result["stdout"] else "",
+        "pipeline_stderr":  result["stderr"][-1000:] if result["stderr"] else "",
     }
 
 
@@ -885,6 +877,36 @@ def validate_config(config_path: str) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # Static validation — 13-category check (vocab, goals, breach, remote, rates, …)
+    static_issues: Dict[str, List[str]] = {}
+    static_cmd = [
+        sys.executable,
+        str(REPO_ROOT / "tools" / "static_validation.py"),
+        str(p),
+    ]
+    static_result = _run_subprocess(static_cmd, timeout=30)
+    if static_result["returncode"] != 0 and static_result["stdout"]:
+        # Parse per-category issues from verbose output: "  [label] message"
+        current_label = ""
+        for line in static_result["stdout"].splitlines():
+            stripped = line.strip()
+            m = re.match(r"\[(\w+)\]\s+(.*)", stripped)
+            if m:
+                current_label = m.group(1)
+                msg = m.group(2)
+                static_issues.setdefault(current_label, []).append(msg)
+    elif static_result["returncode"] != 0:
+        static_issues["static"] = [static_result["stderr"][:300] or "static_validation failed"]
+
+    # Promote critical static issues to errors, rest to warnings
+    _critical = {"breach", "remote", "parse"}
+    for label, msgs in static_issues.items():
+        for msg in msgs:
+            if label in _critical:
+                errors.append(f"[static/{label}] {msg}")
+            else:
+                warnings.append(f"[static/{label}] {msg}")
+
     recommendations = _generate_fix_recommendations(errors, warnings, [])
 
     return {
@@ -892,6 +914,7 @@ def validate_config(config_path: str) -> Dict[str, Any]:
         "errors":          errors,
         "warnings":        warnings,
         "depth_report":    data.get("depth_report", {}),
+        "static_issues":   static_issues,
         "recommendations": recommendations,
     }
 

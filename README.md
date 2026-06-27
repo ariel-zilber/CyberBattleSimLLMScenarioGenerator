@@ -219,19 +219,24 @@ flowchart TD
     GRAPHS[scenario_graph.py\nSVG topology graphs] --> REP
 
     subgraph Reporting["Reporting — parallel"]
-        REP --> L & M & N
+        REP --> L & M & N & IMG
         L[human_report.py\nDetailed per-domain PDF]
         M[executive.py\nCross-domain LaTeX PDF]
         N[presentation.py\nSlide-deck PDF]
+        IMG[gemini_image.py\nRepresentative image prompt + PNG]
     end
 
-    L & M & N --> O[Output\ndatasets/ + reports/]
+    L & M & N & IMG --> O[Output\ndatasets/ + reports/]
 
     style LLMGen fill:#5c4a1a,color:#fff
     style Phase1 fill:#1a3a5c,color:#fff
     style Phase2 fill:#1a5c2a,color:#fff
     style Reporting fill:#3a1a5c,color:#fff
 ```
+
+The Gemini image step writes `reports/gemini_image_prompt.txt` and, when
+`GEMINI_API_KEY` or `GOOGLE_API_KEY` is available,
+`reports/gemini_representative_image.png` for each generated scenario output.
 
 ---
 

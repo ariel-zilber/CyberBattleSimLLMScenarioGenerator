@@ -1,0 +1,1148 @@
+metadata:
+  scenario_id: SPECIALIST-SPECIALIST-META-CICD-TO-PRODUCTION-COMPROMISE-XLARGE-V1
+  agent: Meta
+  training_mode: specialist_meta
+  zones:
+  - Z4_InternetEdge
+  - Z6_AWSCloud
+  - Z1_HQVLANs
+  - Z1_ServerFarm
+  terminal_goal: DomainController
+  intermediate_goals:
+  - name: PaloAltoFirewall
+    value: 1200
+    reason: Z2 milestone on PATH A — signals 4-hop perimeter route is in progress
+  - name: AWSAppServer
+    value: 1500
+    reason: Z6 milestone on PATH B — signals 3-hop cloud route is in progress
+  - name: AdminWorkstation
+    value: 1200
+    reason: S_Lateral milestone — cloud IAM credential relay pivots into Z1 corporate
+      Windows admin host
+  node_range:
+  - 700
+  - 950
+  attack_path:
+  - Probe — both WAF (Z4) and AWSWebServer (Z6) are fingerprinted from internet
+  - '[PATH A - 4 hops]: PanOS_CMDInject on WAF → PaloAltoFirewall (Z2) → AdminWorkstation
+    (Z1) → DomainController'
+  - '[PATH B - 3 hops]: Nginx_Linux_Critical on AWSWebServer → AWSAppServer → CloudIAM_LDAP_Write
+    → DomainController'
+  - 'Agent selects: PATH B (cloud) is faster — 3 hops vs 4 hops'
+  - TERMINAL — DomainController owned (value 10000)
+  notes: 'Specialist-meta dataset variant: CI/CD-to-production scenario emphasizing
+    cloud/Linux services, network exposure, secrets, and lateral movement into production.
+
+    Size stratum: xlarge; target node range 700-950; target goal count approximately
+    8.
+
+    Intended specialist emphasis: S_Linux, S_Network, S_Lateral. Optional/supporting
+    specialists: S_Windows, S_Identity.
+
+    Each generated instance should contain meaningful causal segments for 3-4 specialist
+    domains,
+
+    include at least one bridge role from S_Identity or S_Lateral, and preserve the
+    GLOBALTECH
+
+    reference architecture with external/perimeter, HQ edge, internal/server-farm,
+    branch/cloud,
+
+    and management or crown-jewel context. Decoys and supporting assets are allowed
+    but must not
+
+    dominate or block the main multi-specialist paths.
+
+    ADVERSARIAL DESIGN: Both paths reach DomainController. PATH A (Z4→Z2→Z1) requires
+
+    4 hops including Z2 perimeter pivot. PATH B (Z6→Z1 cloud bridge) requires only
+    3 hops
+
+    using CloudIAM_LDAP_Write. The agent must learn to select PATH B after exploration.
+
+    Neither path is blocked — the scenario tests path selection, not stagnation recovery.
+
+    DomainController is is_goal: true (value 10000) — this is a Stage 4 isolation
+    config.
+
+    IdentityProvider property on DomainController enables the Z6→Z1 IAM bridge (PATH
+    B).
+
+    '
+  source_template: /home/ariel/Documents/thesis/CyberBattleSimLLMScenarioGenerator/data/scenarios/specialist_meta/meta_cicd_to_production_compromise_xlarge_v1.yaml
+  fixed_specialists:
+  - s_network
+  - s_linux
+  - s_windows
+  - s_identity
+  - s_lateral
+  vocabulary_source: /home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml
+config:
+  min_total_nodes: 700
+  max_total_nodes: 950
+  goal_config:
+    num_goals: 3
+    selection_strategy: diverse
+identifiers:
+  standard_ports:
+  - DNS
+  - HTTP
+  - HTTPS
+  - Kerberos
+  - LDAP
+  - LDAPS
+  - PostgreSQL
+  - RDP
+  - SMB
+  - SSH
+  - WinRM
+  - FTP
+  - VNC
+  base_properties:
+  - breach_node
+  - ADCS
+  - AWS
+  - Alpine
+  - AppServer
+  - CiscoIOS
+  - CloudInstance
+  - DatabaseServer
+  - Debian
+  - DomainAdmin
+  - DomainController
+  - DomainJoined
+  - FileServer
+  - Firewall
+  - GlobalProtect
+  - HTTP
+  - IdentityProvider
+  - Kerberoastable
+  - Linux
+  - LocalAdmin
+  - MailServer
+  - Misconfigured
+  - NGFW
+  - NTLMRelayable
+  - NetworkDevice
+  - NginxServer
+  - NoLAPS
+  - PANOS
+  - PaloAlto
+  - PrintServer
+  - Router
+  - SMB
+  - SNMP
+  - Unpatched
+  - WAF
+  - WebServer
+  - Win10
+  - Win2019
+  - Win2022
+  - Windows
+  - Workstation
+  - DeveloperWorkstation
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: HTTPS
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.11
+  properties:
+  - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+  - HTTPS
+  - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.2
+  min_leaked_nodes: 3
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: 'Internet-facing reconnaissance reveals two GLOBALTECH attack surfaces:
+        (1) Z4 Palo Alto GlobalProtect WAF/VPN gateway at 10.0.1.x, (2) Z6 AWS nginx
+        WebTier at 10.3.0.x. Both are fingerprinted and viable. The agent must explore
+        both to determine the faster path.
+
+        '
+      cost: 0.5
+      success_rate: 0.85
+      reward: Dual attack surface identified — Z4 WAF (PAN-OS) and Z6 WebTier (nginx/libcrypto)
+        both fingerprinted and accessible
+    credential_leak:
+      name: Solvability.SSH_PrivKey_Theft
+      type: LOCAL
+      description: 'Dual phishing campaign — harvests either a GlobalProtect VPN credential
+        (for Z4 initial access) or an AWS Console IAM key (for Z6 initial access).
+        The agent chooses which path to pursue based on exploration history.
+
+        '
+      cost: 1.5
+      success_rate: 0.65
+      reward: Dual-path credential obtained — GlobalProtect or AWS IAM key available
+        for Z4 or Z6 entry
+attack_flow:
+- source_pattern: CiscoEdgeRouter
+  targets:
+  - WAF
+- source_pattern: WAF
+  targets:
+  - IPSAppliance
+  - PaloAltoFirewall
+- source_pattern: IPSAppliance
+  targets:
+  - PaloAltoFirewall
+- source_pattern: PaloAltoFirewall
+  targets:
+  - AdminWorkstation
+- source_pattern: AdminWorkstation
+  targets:
+  - ExchangeServer
+  - FileServer
+- source_pattern: ExchangeServer
+  targets:
+  - DomainController
+- source_pattern: FileServer
+  targets:
+  - DomainController
+- source_pattern: AWSWebServer
+  targets:
+  - AWSAppServer
+- source_pattern: AWSAppServer
+  targets:
+  - AWSPostgreSQL
+  - RnDWorkstation
+- source_pattern: RnDWorkstation
+  targets:
+  - DomainController
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Solvability.PassTheHash
+    type: LOCAL
+    description: 'Credential relay supporting both paths: NTLM hash relay from Z2
+      perimeter (PATH A) and cloud IAM token extraction from Z6 containers (PATH B).
+      S_Lateral uses whichever is available based on the active path.
+
+      '
+    cost: 0.5
+    success_rate: 0.7
+    reward: Cross-zone credential relayed from {target} — perimeter NTLM or cloud
+      IAM token obtained
+    node_probability: 0.25
+    target_coverage: 0.25
+    min_targets: 2
+    default_port: HTTPS
+  leak_neighbors:
+    name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: 'Network discovery for both paths: ARP/CDP for Z4/Z2 perimeter path,
+      container network scan for Z6 cloud path. Both feed the meta-agent''s topological
+      awareness for path selection.
+
+      '
+    cost: 0.5
+    success_rate: 0.85
+    reward: Adjacent node {target} discovered — both path topologies being mapped
+    node_probability: 0.6
+    target_coverage: 0.5
+    min_targets: 2
+probe_vulnerabilities:
+- name: Solvability.NodeJS_IP_SSRF
+  os: Linux
+  type: REMOTE
+  description: HTTP/SSH banner and container metadata fingerprint to identify Linux
+    distribution, runtime version, and cloud provider.
+  cost: 0.5
+  success_rate: 1.0
+- name: Solvability.WSD_RCE
+  os: Windows
+  type: REMOTE
+  description: SMB/RDP banner to identify Windows OS version, patch level, and domain
+    membership.
+  cost: 0.5
+  success_rate: 0.9
+solvability_vulnerabilities:
+  remote_access:
+  - name: Solvability.PanOS_CMDInject
+    type: REMOTE
+    description: 'CVE-2024-3400 — PAN-OS GlobalProtect RCE. CVSS 10.0. SR 0.90. PATH
+      A entry point — Z4 WAF PAN-OS command injection. Viable but leads to 4-hop path
+      to DomainController.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: PAN-OS RCE (CVE-2024-3400) — PATH A started via Z4 WAF (4-hop route to
+      DC)
+    match_properties:
+    - Firewall
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - Unpatched
+    probability: 0.8
+  - name: Solvability.CiscoIOS_XE_PrivEsc
+    type: REMOTE
+    description: 'CVE-2023-20198 — Cisco IOS XE Web UI priv-esc. CVSS 10.0. SR 0.90.
+      PATH A alternative Z2 breach — Cisco router compromised if WAF pivot fails.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cisco IOS XE priv-esc (CVE-2023-20198) — PATH A Z2 CiscoEdgeRouter breached
+    match_properties:
+    - Router
+    - CiscoIOS
+    - NetworkDevice
+    - Unpatched
+    probability: 0.75
+  - name: Solvability.WSD_RCE
+    type: REMOTE
+    description: 'CVE-2023-28250 — Windows WSD RCE. CVSS 9.8. SR 0.90. PATH A Z1 VLAN
+      workstation entry — reachable after Z2 pivot.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: WSD RCE (CVE-2023-28250) — PATH A Z1 AdminWorkstation compromised
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.75
+  - name: Solvability.GhostCMS_CSV_Injection
+    type: REMOTE
+    description: 'Linux web application RCE — Z6 AWSWebServer compromised via server-side
+      injection. PATH B entry point — leads to 3-hop path to DomainController (shorter
+      than PATH A).
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: AWSWebServer Linux RCE — PATH B started via Z6 AWSWebServer (3-hop route
+      to DC)
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.85
+  - name: Solvability.ProxyShell
+    type: REMOTE
+    description: 'CVE-2024-41110 — HashiCorp Vault Go stdlib CRITICAL. CVSS 9.9. SR
+      0.90. PATH B Z6 AppTier — AWSAppServer compromised via AppServer RCE. Contains
+      cloud IAM credentials for LDAP write bridge to Z1.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Vault GoStdlib RCE (CVE-2024-41110) — PATH B Z6 AWSAppServer compromised,
+      IAM creds accessible
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.8
+  - name: Solvability.Certifried
+    type: REMOTE
+    description: 'CVE-2022-26923 — Certifried ADCS privesc. CVSS 8.8. SR 0.88. Final
+      DC compromise step — shared endpoint for both PATH A and PATH B.
+
+      '
+    cost: 1.5
+    success_rate: 0.88
+    reward: Certifried ADCS privesc (CVE-2022-26923) — DA certificate obtained, DomainController
+      in reach
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.75
+  - name: Solvability.Concourse_ContainerEscape
+    type: REMOTE
+    description: CVE-2022-31150 — Concourse CI container escape via worker misconfiguration.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Concourse container escape — host OS access from CI/CD worker container
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.65
+  - name: Solvability.ApacheSpark_PrivEsc
+    type: REMOTE
+    description: CVE-2023-22946 — Apache Spark privilege escalation via malicious
+      config. CVSS 9.9.
+    cost: 1.0
+    success_rate: 0.85
+    reward: Apache Spark privesc — arbitrary code execution with elevated privileges
+      on Spark cluster
+    match_properties:
+    - Linux
+    - AppServer
+    - CloudInstance
+    probability: 0.65
+  - name: Solvability.SnakeYAML_Deserialization
+    type: REMOTE
+    description: CVE-2022-1471 — SnakeYAML deserialization RCE via crafted YAML document.
+      CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: SnakeYAML deserialization RCE — remote code execution on Java/Spring application
+    match_properties:
+    - Linux
+    - WebServer
+    probability: 0.7
+  - name: Solvability.ImageMagick_ShellInject
+    type: REMOTE
+    description: CVE-2016-3714 — ImageMagick shell injection via malicious image (ImageTragick).
+      CVSS 8.4.
+    cost: 1.0
+    success_rate: 0.85
+    reward: ImageMagick shell injection — RCE via malicious uploaded image processed
+      by server
+    match_properties:
+    - Linux
+    - WebServer
+    - Unpatched
+    probability: 0.7
+  - name: Solvability.MySQL2_SQLInject_1
+    type: REMOTE
+    description: CVE-2022-21592 — MySQL client-side SQL injection via crafted server
+      response.
+    cost: 1.0
+    success_rate: 0.9
+    reward: MySQL SQLi v1 — database records exfiltrated and OS command execution
+      obtained
+    match_properties:
+    - Linux
+    - DatabaseServer
+    probability: 0.7
+  - name: Solvability.MySQL2_SQLInject_2
+    type: REMOTE
+    description: CVE-2023-21980 — MySQL buffer overflow SQL injection RCE. CVSS 8.3.
+    cost: 1.0
+    success_rate: 0.75
+    reward: MySQL SQLi v2 — elevated OS command execution via MySQL buffer overflow
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.JavaDeserialize_RCE_1
+    type: REMOTE
+    description: CVE-2015-4852 — Java deserialization RCE via Apache Commons Collections
+      gadget chain.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Java deserialization RCE v1 — remote code execution via gadget chain on
+      Java app server
+    match_properties:
+    - Linux
+    - AppServer
+    - Unpatched
+    probability: 0.7
+  - name: Solvability.PgDump_UntrustedData
+    type: REMOTE
+    description: CVE-2023-2454 — PostgreSQL pg_dump untrusted search path RCE. CVSS
+      7.2.
+    cost: 1.0
+    success_rate: 0.8
+    reward: PostgreSQL pg_dump RCE — code execution via untrusted search path in pg_dump
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - Misconfigured
+    probability: 0.65
+  - name: Solvability.Docker_Socket_Escape
+    type: LOCAL
+    description: Docker socket mounted in container — escape to host via /var/run/docker.sock.
+    cost: 1.0
+    success_rate: 0.85
+    reward: Docker socket escape — host OS root access via mounted docker socket
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Kubernetes_HostPID_Escape
+    type: LOCAL
+    description: Kubernetes hostPID=true container escape — access host processes
+      from pod.
+    cost: 1.0
+    success_rate: 0.88
+    reward: Kubernetes hostPID escape — host process namespace accessed from container
+    match_properties:
+    - Linux
+    - CloudInstance
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.Container_ProcMount_Escape
+    type: LOCAL
+    description: Container /proc/sysrq-trigger or procMount=Unmasked escape to host.
+    cost: 1.0
+    success_rate: 0.72
+    reward: ProcMount container escape — host kernel access via unmasked /proc
+    match_properties:
+    - Linux
+    - CloudInstance
+    probability: 0.6
+    target_coverage: 0.3
+    min_targets: 1
+  - name: Solvability.Redis_Noauth_Config_Rewrite
+    type: LOCAL
+    description: Redis no-auth config rewrite — unauthenticated CONFIG SET dir/dbfilename
+      for code exec.
+    cost: 1.0
+    success_rate: 0.75
+    reward: Redis noauth config rewrite — SSH key written or cron injected via Redis
+      CONFIG SET
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Hadoop_FileUtil_Inject
+    type: LOCAL
+    description: CVE-2022-25168 — Apache Hadoop FileUtil symlink injection for credential
+      extraction.
+    cost: 1.0
+    success_rate: 0.68
+    reward: Hadoop FileUtil injection — HDFS credentials and service account tokens
+      extracted
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.6
+    target_coverage: 0.3
+    min_targets: 1
+  - name: Solvability.Bundler_DNSHijack
+    type: LOCAL
+    description: Bundler gem dependency DNS hijack — malicious gem installed via typosquatting.
+    cost: 1.0
+    success_rate: 0.58
+    reward: Bundler DNS hijack — malicious gem code executed, CI environment credentials
+      leaked
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.6
+    target_coverage: 0.3
+    min_targets: 1
+  credential_leak:
+  - name: Solvability.Container_EnvVars
+    type: LOCAL
+    description: Enumerate Z6 container env vars for AWS IAM tokens — key PATH B technique
+      enabling the cloud→AD LDAP write bridge.
+    cost: 0.5
+    success_rate: 0.6
+    reward: Z6 container env vars extracted — AWS IAM token obtained for CloudIAM_LDAP_Write
+      bridge to Z1
+    match_properties:
+    - Linux
+    probability: 0.22
+  - name: Solvability.Mimikatz_NTLM
+    type: LOCAL
+    description: Dump NTLM hashes from LSASS — shared technique for both PATH A and
+      PATH B after Z1 entry.
+    cost: 0.5
+    success_rate: 0.65
+    reward: NTLM hashes dumped from Z1 LSASS — domain creds obtained for DC escalation
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.22
+  - name: Solvability.Redis_NoAuth
+    type: LOCAL
+    description: Unauthenticated HTTP dump — Z6 DataTier cached IAM tokens and session
+      data accessible without auth.
+    cost: 0.5
+    success_rate: 0.8
+    reward: HTTP NoAuth dump — Z6 cached IAM tokens and session data extracted
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - HTTP
+    - Misconfigured
+    probability: 0.22
+  - name: Solvability.Kerberoasting
+    type: LOCAL
+    description: Kerberoasting TGS tickets — Z1 service account hash cracking after
+      entry via either path.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Kerberoasting hashes cracked — service account password for DC escalation
+    match_properties:
+    - Windows
+    - Kerberoastable
+    - DomainJoined
+    probability: 0.22
+  - name: Solvability.WordPressDB_Creds
+    type: LOCAL
+    description: WordPress wp-config.php database credentials extraction from compromised
+      web server.
+    cost: 0.5
+    success_rate: 0.75
+    reward: WordPress DB credentials extracted — MySQL user/password from wp-config.php
+    match_properties:
+    - Linux
+    - WebServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Kafka_ConfigLeak
+    type: LOCAL
+    description: Apache Kafka producer/consumer configuration leak — extracts bootstrap
+      server credentials.
+    cost: 0.5
+    success_rate: 0.7
+    reward: Kafka config leak — broker credentials and SASL secrets extracted from
+      config files
+    match_properties:
+    - Linux
+    - AppServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Grafana_DataSource
+    type: LOCAL
+    description: Grafana data source credential extraction — database passwords from
+      Grafana config.
+    cost: 0.5
+    success_rate: 0.7
+    reward: Grafana datasource secrets extracted — database and API credentials obtained
+    match_properties:
+    - Linux
+    - AppServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Airflow_Connections
+    type: LOCAL
+    description: Apache Airflow connections secrets extraction — database and API
+      credentials from UI/DB.
+    cost: 0.5
+    success_rate: 0.65
+    reward: Airflow connections dumped — all pipeline database and service credentials
+      extracted
+    match_properties:
+    - Linux
+    - AppServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  discovery:
+  - name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: Container network scan — discovers Z6 internal mesh and VPN range
+      to Z1 for PATH B cloud bridge.
+    cost: 0.5
+    success_rate: 0.8
+    reward: Z6 container network mapped — VPN route to Z1 and adjacent container IPs
+      discovered for PATH B
+    match_properties:
+    - Linux
+    probability: 0.85
+  goal_access:
+  - name: Solvability.DCSync
+    type: LOCAL
+    description: DCSync on DomainController — all domain hashes extracted via DS-Replication,
+      TERMINAL GOAL achieved.
+    cost: 0.5
+    success_rate: 0.6
+    reward: DCSync complete — domain NTLM hashes and krbtgt extracted via PATH A or
+      PATH B kill chain
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  - name: Solvability.NTDS_Dump
+    type: LOCAL
+    description: NTDS.dit extraction via VSS — full domain hash database via path-selected
+      kill chain.
+    cost: 1.0
+    success_rate: 0.6
+    reward: NTDS.dit extracted — complete domain hash database via dual-path attack
+      chain
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.7
+    goal_category: dump
+  - name: Solvability.ADCS_ESC1
+    type: LOCAL
+    description: ADCS ESC1 goal-stage — DA cert PKINIT → DCSync, domain compromised
+      via optimal path.
+    cost: 0.5
+    success_rate: 0.6
+    reward: ADCS ESC1 domain takeover — DC compromised via faster PATH B cloud-to-corp
+      route
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+    goal_category: privesc
+  lateral_movement:
+  - name: Solvability.NTLM_Relay_SMB
+    type: REMOTE
+    description: 'CVE-2024-21410 — Exchange NTLM relay. CVSS 9.8. SR 0.90. PATH A
+      Z1 Server Farm step — Exchange relay enables RBCD write for DC access.
+
+      '
+    cost: 1.0
+    success_rate: 0.72
+    reward: Exchange NTLM relay (CVE-2024-21410) — PATH A RBCD written, DC access
+      via relay
+    match_properties:
+    - Windows
+    - MailServer
+    probability: 0.75
+  - name: Solvability.CloudIAM_LDAP_Write
+    type: LOCAL
+    description: Cloud IAM token → AD Seamless SSO LDAP write. PATH B's Z6→Z1 bridge
+      technique — writes RBCD on DomainController via federated IAM token. Shorter
+      path than perimeter route.
+    cost: 1.5
+    success_rate: 0.65
+    reward: CloudIAM LDAP write succeeded — RBCD on DomainController via IAM token,
+      PATH B Z1 entry established
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.7
+  - name: Solvability.NTLM_Relay_LDAP
+    type: LOCAL
+    description: SMB NTLM relay from Z2 position — PATH A credential technique capturing
+      PaloAltoFirewall machine hash for Z1 relay.
+    cost: 1.0
+    success_rate: 0.72
+    reward: NTLM relay SMB (PATH A) — Z2 machine hash relayed to Z1 AdminWorkstation
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.7
+services:
+  IPSAppliance:
+    port: HTTPS
+    value: 400
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - NetworkDevice
+    - Unpatched
+    is_goal: false
+  PaloAltoFirewall:
+    port: HTTPS
+    value: 1200
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - NGFW
+    - NetworkDevice
+    - PaloAlto
+    - PANOS
+    - NTLMRelayable
+    - DomainAdmin
+    is_goal: false
+  CiscoEdgeRouter:
+    port: HTTPS
+    value: 1000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Router
+    - NetworkDevice
+    - CiscoIOS
+    - Unpatched
+    - SNMP
+    is_goal: false
+  AWSWebServer:
+    port: HTTPS
+    value: 800
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Debian
+    - WebServer
+    - NginxServer
+    - AppServer
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  AWSAppServer:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Debian
+    - AppServer
+    - CloudInstance
+    - AWS
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  AWSPostgreSQL:
+    port: PostgreSQL
+    value: 1000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Alpine
+    - DatabaseServer
+    - Unpatched
+    is_goal: false
+  AWSRedis:
+    port: HTTP
+    value: 800
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - DatabaseServer
+    - HTTP
+    - Misconfigured
+    is_goal: false
+  AdminWorkstation:
+    port: RDP
+    value: 2000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - LocalAdmin
+    - DomainAdmin
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  ExchangeServer:
+    port: HTTPS
+    value: 2500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - MailServer
+    - DomainJoined
+    - PrintServer
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  FileServer:
+    port: SMB
+    value: 1800
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - FileServer
+    - DomainJoined
+    - Misconfigured
+    - SMB
+    - DatabaseServer
+    - Unpatched
+    is_goal: false
+  DomainController:
+    port: LDAP
+    value: 10000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2022
+    - DomainController
+    - DomainJoined
+    - ADCS
+    - DomainAdmin
+    - DatabaseServer
+    - IdentityProvider
+    is_goal: true
+  WAFAppliance:
+    port: HTTPS
+    value: 500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Firewall
+    - WAF
+    - NetworkDevice
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - Unpatched
+    - breach_node
+    is_goal: false
+  ftpd:
+    port: FTP
+    value: 600
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - FileServer
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  RnDWorkstation:
+    port: VNC
+    value: 500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - DeveloperWorkstation
+    - Misconfigured
+    is_goal: false
+domains:
+- name: InternetEdge
+  subnet: 10.0.1.0/24
+  filler:
+  - IPSAppliance
+  mandatory_services:
+  - WAFAppliance
+  - IPSAppliance
+  groups:
+  - name: WAFs
+    service: WAFAppliance
+    min_count: 1
+    max_count: 3
+  - name: IPSAppliances
+    service: IPSAppliance
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: WAFs
+    target: breach_node
+    relation: MUST_HAVE
+  - source: WAFs
+    target: Unpatched
+    relation: MUST_HAVE
+  - source: WAFs
+    target: IPSAppliances
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- name: HQEdge
+  subnet: 10.0.2.0/24
+  filler:
+  - PaloAltoFirewall
+  mandatory_services:
+  - PaloAltoFirewall
+  - CiscoEdgeRouter
+  groups:
+  - name: PaloAltoFirewalls
+    service: PaloAltoFirewall
+    min_count: 1
+    max_count: 3
+  - name: CiscoEdgeRouters
+    service: CiscoEdgeRouter
+    min_count: 1
+    max_count: 2
+  - name: RnDWorkstations
+    service: RnDWorkstation
+    min_count: 1
+    max_count: 4
+  constraints:
+  - source: PaloAltoFirewalls
+    target: NTLMRelayable
+    relation: MUST_HAVE
+  - source: PaloAltoFirewalls
+    target: CiscoEdgeRouters
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- name: AWSCloud
+  subnet: 10.3.0.0/24
+  filler:
+  - AWSPostgreSQL
+  mandatory_services:
+  - AWSWebServer
+  - AWSAppServer
+  - AWSPostgreSQL
+  - AWSRedis
+  groups:
+  - name: AWSWebServers
+    service: AWSWebServer
+    min_count: 2
+    max_count: 8
+  - name: AWSAppServers
+    service: AWSAppServer
+    min_count: 2
+    max_count: 8
+  - name: AWSPostgreSQLNodes
+    service: AWSPostgreSQL
+    min_count: 1
+    max_count: 3
+  - name: AWSRedisNodes
+    service: AWSRedis
+    min_count: 1
+    max_count: 3
+  - name: ftpds
+    service: ftpd
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: AWSRedisNodes
+    target: Misconfigured
+    relation: MUST_HAVE
+  - source: AWSAppServers
+    target: AWSWebServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AWSPostgreSQLNodes
+    target: AWSAppServers
+    relation: MUST_CONNECT
+    protocol: PostgreSQL
+  - source: AWSAppServers
+    target: AWSRedisNodes
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: HTTP
+- name: HQVLANs
+  subnet: 10.1.0.0/24
+  filler:
+  - AdminWorkstation
+  mandatory_services:
+  - AdminWorkstation
+  groups:
+  - name: AdminWorkstations
+    service: AdminWorkstation
+    min_count: 3
+    max_count: 15
+  constraints:
+  - source: AdminWorkstations
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: AdminWorkstations
+    target: DomainJoined
+    relation: MUST_HAVE
+- name: ServerFarm
+  subnet: 10.1.10.0/24
+  filler:
+  - FileServer
+  mandatory_services:
+  - ExchangeServer
+  - FileServer
+  - DomainController
+  groups:
+  - name: ExchangeServers
+    service: ExchangeServer
+    min_count: 1
+    max_count: 5
+  - name: FileServers
+    service: FileServer
+    min_count: 2
+    max_count: 10
+  - name: DomainControllers
+    service: DomainController
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: IdentityProvider
+    relation: MUST_HAVE
+  - source: ExchangeServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: FileServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: SMB
+inter_domain_constraints:
+- source_domain: InternetEdge
+  target_domain: HQEdge
+  constraints:
+  - source: WAFs
+    target: PaloAltoFirewalls
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: IPSAppliances
+    target: CiscoEdgeRouters
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- source_domain: HQEdge
+  target_domain: HQVLANs
+  constraints:
+  - source: PaloAltoFirewalls
+    target: AdminWorkstations
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: SMB
+  - source: CiscoEdgeRouters
+    target: AdminWorkstations
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- source_domain: AWSCloud
+  target_domain: ServerFarm
+  constraints:
+  - source: AWSAppServers
+    target: DomainControllers
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: LDAP
+- source_domain: AWSCloud
+  target_domain: HQVLANs
+  constraints:
+  - source: AWSPostgreSQLNodes
+    target: AdminWorkstations
+    relation: KNOWS
+- source_domain: HQVLANs
+  target_domain: ServerFarm
+  constraints:
+  - source: AdminWorkstations
+    target: ExchangeServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AdminWorkstations
+    target: FileServers
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: AdminWorkstations
+    target: DomainControllers
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: LDAP
+entry_points:
+- domain: InternetEdge
+  node: WAFs
+- domain: AWSCloud
+  node: AWSWebServers
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.45
+  auto_fix_enabled: true
+  auto_fix_strategies:
+  - add_remote_vulnerability_to_entry
+  - add_credential_leakage
+  - add_lateral_movement_vulnerabilities

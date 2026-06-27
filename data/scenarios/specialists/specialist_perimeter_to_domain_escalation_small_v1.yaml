@@ -1,0 +1,1431 @@
+metadata:
+  scenario_id: SPECIALIST-SPECIALIST-META-PERIMETER-TO-DOMAIN-ESCALATION-SMALL-V1
+  agent: Meta
+  training_mode: specialist_meta
+  zones:
+  - Z4_InternetEdge
+  - Z2_HQEdge
+  - Z1_ServerFarm
+  terminal_goal: DomainController
+  intermediate_goals:
+  - name: FortiGateAppliance
+    value: 2500
+    reason: Z2 entry reward — inter-domain crossing Z4→Z2 traversal
+  - name: SalesWorkstation
+    value: 1000
+    reason: Z1 entry reward — Z2→Z1 boundary crossing triggers domain_foothold
+  - name: AdminWorkstation
+    value: 2500
+    reason: Near-goal — domain foothold established, gates S_Identity routing
+  node_range:
+  - 35
+  - 50
+  attack_path:
+  - Probe — Solvability.CiscoIOS_RPKI fingerprints Z4 appliances (breach node)
+  - Z4 exploit — PanOS_CMDInject (CVE-2024-3400) on WAF + F5_BIGIP_AuthBypass → Z4
+    foothold
+  - Z4 config extraction — ConfigBackup_Exfil + SNMP_CommunityDump → Z2 subnet credentials
+  - Z4→Z2 relay — inter_domain credential relay → FortiGateAppliance session obtained
+  - Z2 escalation — CiscoIOS_XE_PrivEsc (CVE-2023-20198) + FortiOS_SSLVPN_RCE → Z2
+    perimeter owned
+  - Z2→Z1 lateral — NTLM_Relay_SMB via compromised Z2 router → SalesWorkstation domain
+    foothold
+  - S_Windows prerequisite — WSD_RCE (CVE-2023-28250) + PrintNightmare on workstations
+    → domain_foothold = true
+  - S_Identity routing — BloodHound_Recon + DCSync + Certifried on DomainController
+    → TERMINAL (value 10000)
+  notes: 'Specialist-meta dataset variant: Perimeter-to-domain escalation scenario
+    emphasizing network ingress, Windows foothold, and identity compromise.
+
+    Size stratum: small; target node range 35-50; target goal count approximately
+    3.
+
+    Intended specialist emphasis: S_Network, S_Windows, S_Identity. Optional/supporting
+    specialists: S_Lateral, S_Linux.
+
+    Each generated instance should contain meaningful causal segments for 3-4 specialist
+    domains,
+
+    include at least one bridge role from S_Identity or S_Lateral, and preserve the
+    GLOBALTECH
+
+    reference architecture with external/perimeter, HQ edge, internal/server-farm,
+    branch/cloud,
+
+    and management or crown-jewel context. Decoys and supporting assets are allowed
+    but must not
+
+    dominate or block the main multi-specialist paths.
+
+    Stage 2 three-zone chain. Key prerequisite: meta-agent must call S_Windows (Z1
+    workstations)
+
+    BEFORE S_Identity (DomainController). domain_foothold flag enforces this ordering.
+
+    Without at least one Z1 workstation owned, S_Identity routing yields zero reward
+
+    (DomainController has no remote CVEs — only AD technique goal_access entries).
+
+    All Z4 values ≤2500; Z2 values 2500–4500; Z1 values 1000–10000.
+
+    DomainController value 10000 is is_goal: true here (Stage 2 — no Z8 yet).
+
+    '
+  source_template: /home/ariel/Documents/thesis/CyberBattleSimLLMScenarioGenerator/data/scenarios/specialist_meta/meta_perimeter_to_domain_escalation_small_v1.yaml
+  fixed_specialists:
+  - s_network
+  - s_linux
+  - s_windows
+  - s_identity
+  - s_lateral
+  vocabulary_source: /home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml
+config:
+  min_total_nodes: 35
+  max_total_nodes: 50
+  goal_config:
+    num_goals: 3
+    selection_strategy: diverse
+identifiers:
+  standard_ports:
+  - DNS
+  - HTTP
+  - HTTPS
+  - Kerberos
+  - LDAP
+  - MSSQL
+  - RDP
+  - SMB
+  - SNMP
+  - SSH
+  - Telnet
+  - SMTP
+  base_properties:
+  - breach_node
+  - ADCS
+  - CiscoASA
+  - CiscoFirepower
+  - CiscoIOS
+  - CiscoNXOS
+  - DatabaseServer
+  - DomainAdmin
+  - DomainController
+  - DomainJoined
+  - F5BIGIP
+  - FileServer
+  - Firewall
+  - FortiGate
+  - GlobalProtect
+  - Kerberoastable
+  - LoadBalancer
+  - LocalAdmin
+  - MailServer
+  - Misconfigured
+  - NTLMRelayable
+  - NetworkDevice
+  - NoLAPS
+  - PANOS
+  - PaloAlto
+  - PrintServer
+  - Router
+  - SMB
+  - SNMP
+  - SSLVPN
+  - Switch
+  - Unpatched
+  - WAF
+  - Win10
+  - Win2019
+  - Win2022
+  - Windows
+  - Workstation
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: SSH
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.13
+  properties:
+  - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+  - HTTP
+  - HTTPS
+  entry_node_count: 1
+  leaked_node_coverage: 0.1
+  min_leaked_nodes: 1
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: Internet-facing port scan and SNMP/HTTP banner grabbing targeting
+        Z4 Internet Edge appliances. DNS resolution for internal domain FQDN and Z1
+        subnet range hints.
+      cost: 0.5
+      success_rate: 0.8
+      reward: Z4 perimeter fingerprinted — appliance vendor stack, domain name, and
+        exposed management endpoints identified
+    credential_leak:
+      name: Solvability.SSH_PrivKey_Theft
+      type: LOCAL
+      description: Shodan/Censys scan targeting Z4 appliances. OSINT for firmware
+        version, default credential candidates, and AS number for GLOBALTECH perimeter
+        routing.
+      cost: 1.0
+      success_rate: 0.65
+      reward: Z4 OSINT complete — firmware fingerprints and default credential candidates
+        identified
+attack_flow:
+- source_pattern: ISPRouter
+  targets:
+  - WAF
+  - CiscoASA
+  - PaloAltoFirewall
+- source_pattern: WAF
+  targets:
+  - CiscoASA
+  - F5LoadBalancer
+- source_pattern: CiscoASA
+  targets:
+  - PaloAltoFirewall
+  - F5LoadBalancer
+- source_pattern: F5LoadBalancer
+  targets:
+  - FortiGateAppliance
+  - CiscoNXOS
+- source_pattern: PaloAltoFirewall
+  targets:
+  - FortiGateAppliance
+  - CiscoNXOS
+- source_pattern: FortiGateAppliance
+  targets:
+  - CiscoNXOS
+  - CiscoFirepower
+  - SalesWorkstation
+- source_pattern: CiscoNXOS
+  targets:
+  - SalesWorkstation
+  - AdminWorkstation
+- source_pattern: CiscoFirepower
+  targets:
+  - SalesWorkstation
+- source_pattern: SalesWorkstation
+  targets:
+  - AdminWorkstation
+  - FileServer
+  - PrintServer
+- source_pattern: AdminWorkstation
+  targets:
+  - FileServer
+  - PrintServer
+  - ExchangeServer
+  - ADCS_Server
+  - DomainController
+- source_pattern: PrintServer
+  targets:
+  - DomainController
+- source_pattern: ADCS_Server
+  targets:
+  - DomainController
+- source_pattern: ExchangeServer
+  targets:
+  - DomainController
+- source_pattern: FileServer
+  targets:
+  - DomainController
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Solvability.PassTheHash
+    type: LOCAL
+    description: Multi-zone credential extraction — running-config on network devices,
+      LSASS/SAM on Windows. Enables cross-zone credential relay across Z4→Z2→Z1 chain.
+    cost: 1.0
+    success_rate: 0.7
+    reward: Credentials relayed from {target} — inter-zone credential chain advanced
+    node_probability: 0.25
+    target_coverage: 0.25
+    min_targets: 1
+    default_port: SMB
+  leak_neighbors:
+    name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: ARP/CDP/LLDP on network devices and LDAP/net commands on Windows
+      hosts. Reveals adjacent nodes across Z4, Z2, and Z1 zones.
+    cost: 0.5
+    success_rate: 0.85
+    reward: Topology discovery — {target} and adjacent zone nodes enumerated
+    node_probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+probe_vulnerabilities:
+- name: Solvability.CiscoIOS_RPKI
+  os: Linux
+  type: REMOTE
+  description: Identifies network appliance type via SNMP sysDescr OID, HTTP management
+    banner, and SSH hostkey.
+  cost: 0.5
+  success_rate: 0.85
+- name: Solvability.WSD_RCE
+  os: Windows
+  type: REMOTE
+  description: Identifies Windows OS version, patch level, and domain membership via
+    RDP negotiation and SMB banner.
+  cost: 0.5
+  success_rate: 0.9
+solvability_vulnerabilities:
+  remote_access:
+  - name: Solvability.PanOS_CMDInject
+    type: REMOTE
+    description: CVE-2024-3400 — PAN-OS GlobalProtect command injection RCE. CVSS
+      10.0. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: PAN-OS GlobalProtect RCE (CVE-2024-3400) — root shell on PaloAltoFirewall
+      in Z4
+    match_properties:
+    - Firewall
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    probability: 0.85
+  - name: Solvability.FortiOS_SSLVPN_RCE
+    type: REMOTE
+    description: CVE-2023-27997 — FortiOS SSL VPN heap overflow RCE. CVSS 9.8. CISA
+      KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: FortiOS SSL VPN heap overflow (CVE-2023-27997) — unauthenticated RCE on
+      FortiGateAppliance
+    match_properties:
+    - Firewall
+    - FortiGate
+    - SSLVPN
+    - Unpatched
+    probability: 0.75
+  - name: Solvability.F5_BIGIP_AuthBypass
+    type: REMOTE
+    description: CVE-2022-1388 — F5 BIG-IP iControl REST authentication bypass. CVSS
+      9.8. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: F5 BIG-IP auth bypass (CVE-2022-1388) — admin access on F5LoadBalancer
+      in Z4
+    match_properties:
+    - LoadBalancer
+    - F5BIGIP
+    - NetworkDevice
+    - Unpatched
+    probability: 0.8
+  - name: Solvability.CiscoIOS_XE_PrivEsc
+    type: REMOTE
+    description: CVE-2023-20198 — Cisco IOS XE Web UI privilege escalation. CVSS 10.0.
+      CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cisco IOS XE Web UI priv-esc (CVE-2023-20198) — level-15 privilege on
+      Z2 CiscoNXOS
+    match_properties:
+    - Router
+    - CiscoIOS
+    - NetworkDevice
+    - Unpatched
+    probability: 0.8
+  - name: Solvability.WSD_RCE
+    type: REMOTE
+    description: CVE-2023-28250 — Windows WSD RCE. CVSS 9.8. Unauthenticated RCE on
+      workstations.
+    cost: 1.0
+    success_rate: 0.9
+    reward: WSD RCE (CVE-2023-28250) — SYSTEM shell on Z1 workstation, domain_foothold
+      established
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.8
+  - name: Solvability.Certifried
+    type: REMOTE
+    description: CVE-2022-26923 — Certifried ADCS privilege escalation. CVSS 8.8.
+    cost: 1.5
+    success_rate: 0.88
+    reward: Certifried ADCS privesc (CVE-2022-26923) — DC impersonation certificate
+      obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.75
+  - name: Solvability.noPac
+    type: REMOTE
+    description: CVE-2021-42287 — noPac SAM Account Name impersonation. CVSS 7.5.
+    cost: 1.5
+    success_rate: 0.75
+    reward: noPac sAMAccountName spoofing — domain admin TGT obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.CiscoASA_IKE_HeapOvf
+    type: REMOTE
+    description: CVE-2016-6366 — Cisco ASA IKEv1 heap overflow RCE. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cisco ASA IKEv1 heap overflow — unauthenticated RCE on Z4 ASA firewall
+    match_properties:
+    - CiscoASA
+    - Firewall
+    - NetworkDevice
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.CiscoASA_SSLVPN_Bypass
+    type: REMOTE
+    description: CVE-2014-3393 — Cisco ASA SSL VPN authentication bypass. CVSS 9.4.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cisco ASA SSL VPN auth bypass — unauthenticated session on ASA firewall
+    match_properties:
+    - CiscoASA
+    - Firewall
+    - SSLVPN
+    - NetworkDevice
+    probability: 0.7
+  - name: Solvability.F5_BIGIP_RCE
+    type: REMOTE
+    description: CVE-2021-22986 — F5 BIG-IP iControl REST RCE. CVSS 9.8. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: F5 BIG-IP iControl RCE — root shell on Z4 load balancer
+    match_properties:
+    - F5BIGIP
+    - LoadBalancer
+    - NetworkDevice
+    - Unpatched
+    probability: 0.75
+  - name: Solvability.SMBGhost
+    type: REMOTE
+    description: CVE-2020-0796 — SMBv3 compression buffer overflow RCE. CVSS 10.0.
+      CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: SMBGhost wormable RCE — SYSTEM shell on unpatched SMBv3 host
+    match_properties:
+    - Windows
+    - SMB
+    - Unpatched
+    probability: 0.7
+  - name: Solvability.MS08_067
+    type: REMOTE
+    description: CVE-2008-4250 — Windows Server Service RCE. CVSS 10.0. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: MS08-067 RCE — SYSTEM shell on legacy Windows workstation
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.55
+  - name: Solvability.SIGRed
+    type: REMOTE
+    description: CVE-2020-1350 — Windows DNS server RCE. CVSS 10.0. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: SIGRed DNS RCE — SYSTEM shell on Windows DNS/DomainController
+    match_properties:
+    - Windows
+    - DomainController
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.IIS_HTTP_Stack
+    type: REMOTE
+    description: CVE-2021-31166 — HTTP Protocol Stack wormable RCE. CVSS 9.8. CISA
+      KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: IIS HTTP.sys wormable RCE — SYSTEM shell on IIS Windows server
+    match_properties:
+    - Windows
+    - MailServer
+    - Unpatched
+    probability: 0.7
+  - name: Solvability.IIS_RCE
+    type: REMOTE
+    description: CVE-2017-7269 — IIS WebDAV ScStoragePathFromUrl buffer overflow RCE.
+      CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: IIS WebDAV RCE — SYSTEM shell on Windows file/web server
+    match_properties:
+    - Windows
+    - FileServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.TCPIP_RCE_1
+    type: REMOTE
+    description: CVE-2022-34718 — Windows TCP/IP IPv6 stack RCE. CVSS 9.8. CISA KEV.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Windows TCP/IP IPv6 RCE — kernel-level shell on unpatched host
+    match_properties:
+    - Windows
+    - Workstation
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.DNS_RCE_1
+    type: REMOTE
+    description: CVE-2021-24078 — Windows DNS server RCE via recursive query. CVSS
+      9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Windows DNS recursive query RCE — SYSTEM on DomainController
+    match_properties:
+    - Windows
+    - DomainController
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.ZeroLogon
+    type: REMOTE
+    description: CVE-2020-1472 — Netlogon privilege escalation to domain admin. CVSS
+      10.0. CISA KEV.
+    cost: 1.0
+    success_rate: 0.7
+    reward: ZeroLogon Netlogon auth bypass — domain admin access on DomainController
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.7
+  - name: Solvability.LSASS_EOP_AD
+    type: REMOTE
+    description: CVE-2022-21833 — LSASS memory corruption AD privilege escalation.
+      CVSS 8.8.
+    cost: 1.0
+    success_rate: 0.8
+    reward: LSASS AD privilege escalation — elevated credentials from DomainController
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.65
+  - name: Solvability.noPac_2
+    type: REMOTE
+    description: CVE-2021-42278 — noPac sAMAccountName impersonation variant 2. CVSS
+      8.8.
+    cost: 1.5
+    success_rate: 0.75
+    reward: noPac v2 sAMAccountName spoofing — domain admin TGT obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.AD_Services_EOP
+    type: REMOTE
+    description: CVE-2022-26923 variant — AD Certificate Services privilege escalation.
+      CVSS 8.8.
+    cost: 1.5
+    success_rate: 0.88
+    reward: AD Services EOP — certificate-based domain admin escalation
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.6
+  - name: Solvability.Kerberos_EOP
+    type: REMOTE
+    description: CVE-2020-17049 — Kerberos Bronze Bit constrained delegation bypass.
+      CVSS 7.2.
+    cost: 1.5
+    success_rate: 0.75
+    reward: Kerberos Bronze Bit — forged S4U2Proxy service ticket bypasses constrained
+      delegation
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.Kerberos_EOP_2
+    type: REMOTE
+    description: CVE-2021-42287 — Kerberos PAC validation bypass for constrained delegation.
+      CVSS 7.5.
+    cost: 1.5
+    success_rate: 0.81
+    reward: Kerberos PAC bypass — constrained delegation exploited for lateral escalation
+    match_properties:
+    - Windows
+    - DomainJoined
+    - Kerberoastable
+    probability: 0.65
+  - name: Solvability.MSAA_Priv
+    type: REMOTE
+    description: CVE-2022-37969 — Windows MSAA service privilege escalation. CVSS
+      7.8.
+    cost: 1.0
+    success_rate: 0.71
+    reward: MSAA privilege escalation — SYSTEM access via Windows accessibility service
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.6
+  - name: Solvability.PanOS_LocalRootEsc
+    type: LOCAL
+    description: CVE-2024-3400 local — PAN-OS GlobalProtect local root escalation
+      post-exploit.
+    cost: 1.0
+    success_rate: 0.67
+    reward: PAN-OS local root escalation — full device config and credential extraction
+    match_properties:
+    - PaloAlto
+    - PANOS
+    - Firewall
+    - NetworkDevice
+    probability: 0.7
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.FortiGate_LocalCmdExec
+    type: LOCAL
+    description: CVE-2023-25610 — FortiOS heap overflow local command execution. CVSS
+      9.3.
+    cost: 1.0
+    success_rate: 0.72
+    reward: FortiGate local command execution — running-config and admin credentials
+      extracted
+    match_properties:
+    - FortiGate
+    - Firewall
+    - NetworkDevice
+    probability: 0.7
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.CiscoNXOS_LocalBash
+    type: LOCAL
+    description: CVE-2019-1862 — Cisco NX-OS local bash shell escape via vsh.
+    cost: 1.0
+    success_rate: 0.55
+    reward: Cisco NX-OS bash shell obtained — underlying OS access and credential
+      extraction
+    match_properties:
+    - CiscoNXOS
+    - Switch
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.CiscoNXOS_LLDP
+    type: REMOTE
+    description: CVE-2021-1274 — Cisco NX-OS LLDP neighbor table credential/topology
+      extraction.
+    cost: 0.5
+    success_rate: 0.65
+    reward: NX-OS LLDP table read — adjacent device topology and MAC inventory extracted
+    match_properties:
+    - CiscoNXOS
+    - Switch
+    - NetworkDevice
+    - SNMP
+    probability: 0.7
+    target_coverage: 0.45
+    min_targets: 1
+  - name: Solvability.AlwaysInstallElevated
+    type: LOCAL
+    description: Windows AlwaysInstallElevated MSI privilege escalation via registry
+      misconfiguration.
+    cost: 1.0
+    success_rate: 0.65
+    reward: AlwaysInstallElevated — SYSTEM shell via malicious MSI package
+    match_properties:
+    - Windows
+    - Workstation
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.UnquotedServicePath
+    type: LOCAL
+    description: Windows unquoted service path privilege escalation via writable directory.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Unquoted service path — SYSTEM shell via service binary replacement
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.DLLHijacking_Windows
+    type: LOCAL
+    description: Windows DLL search order hijacking for privilege escalation.
+    cost: 1.0
+    success_rate: 0.65
+    reward: DLL hijacking — elevated code execution via DLL search order manipulation
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.6
+    target_coverage: 0.3
+    min_targets: 1
+  - name: Solvability.Schtasks_EOP_1
+    type: LOCAL
+    description: Windows scheduled task privilege escalation via weak task permissions.
+    cost: 1.0
+    success_rate: 0.72
+    reward: Schtasks EOP — SYSTEM execution via misconfigured scheduled task
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.SeImpersonatePrivEsc
+    type: LOCAL
+    description: Windows SeImpersonatePrivilege token impersonation (JuicyPotato/RoguePotato).
+    cost: 1.0
+    success_rate: 0.7
+    reward: SeImpersonate token impersonation — SYSTEM shell via service account abuse
+    match_properties:
+    - Windows
+    - Workstation
+    - DomainJoined
+    probability: 0.7
+    target_coverage: 0.4
+    min_targets: 1
+  credential_leak:
+  - name: Solvability.SNMP_CommunityDump
+    type: LOCAL
+    description: Reads SNMP v1/v2c community strings and full MIB from compromised
+      network device.
+    cost: 1.0
+    success_rate: 0.7
+    reward: SNMP community strings extracted — adjacent device MIB and Z2 interface
+      IPs obtained
+    match_properties:
+    - Router
+    - SNMP
+    - NetworkDevice
+    probability: 0.22
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.ConfigBackup_Exfil
+    type: LOCAL
+    description: Reads running-config from compromised device, exposing interface
+      IPs, routing, ACLs, and password hashes.
+    cost: 1.0
+    success_rate: 0.65
+    reward: Running-config exfiltrated — Z2/Z1 subnet routes and hashed enable passwords
+      recovered
+    match_properties:
+    - NetworkDevice
+    - Misconfigured
+    probability: 0.22
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.Mimikatz_NTLM
+    type: LOCAL
+    description: Dump NTLM hashes from LSASS memory on a compromised domain-joined
+      Windows host.
+    cost: 0.5
+    success_rate: 0.65
+    reward: NTLM hash dump from LSASS — domain user and service account hashes obtained
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.22
+    target_coverage: 0.45
+    min_targets: 1
+  - name: Solvability.Kerberoasting
+    type: LOCAL
+    description: Request TGS tickets for SPN-registered service accounts and crack
+      offline.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Kerberoasting TGS tickets harvested — service account hashes for offline
+      cracking
+    match_properties:
+    - Windows
+    - Kerberoastable
+    - DomainJoined
+    probability: 0.22
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.LSA_Secrets
+    type: LOCAL
+    description: Extract LSA secrets from registry hive on compromised Windows host.
+    cost: 0.5
+    success_rate: 0.65
+    reward: LSA secrets extracted — service account passwords and DPAPI key material
+      obtained
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.22
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.PanOS_ConfigDump
+    type: LOCAL
+    description: CVE-2020-2037 — PAN-OS OS command injection for config extraction.
+    cost: 1.0
+    success_rate: 0.9
+    reward: PAN-OS config dump — full running-config with credentials extracted
+    match_properties:
+    - PaloAlto
+    - PANOS
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.EnablePassword_Crack
+    type: LOCAL
+    description: Offline Cisco enable password type-7 or MD5 crack from running-config.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Enable password cracked — privileged CLI access on Cisco router
+    match_properties:
+    - CiscoIOS
+    - Router
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.FortiGate_ConfigBackup
+    type: LOCAL
+    description: FortiGate configuration backup exfiltration via compromised admin
+      session.
+    cost: 0.5
+    success_rate: 0.9
+    reward: FortiGate full config backup extracted — VPN credentials and routing topology
+      revealed
+    match_properties:
+    - FortiGate
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.F5_AdminToken
+    type: LOCAL
+    description: F5 BIG-IP iControl REST admin token extraction from running configuration.
+    cost: 1.0
+    success_rate: 0.75
+    reward: F5 admin token extracted — iControl REST API full access obtained
+    match_properties:
+    - F5BIGIP
+    - LoadBalancer
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.CiscoNXOS_AAA_Secret
+    type: LOCAL
+    description: CVE-2019-1613 — Cisco NX-OS AAA local user secret extraction from
+      NVRAM.
+    cost: 1.0
+    success_rate: 0.75
+    reward: NX-OS AAA secrets extracted — local user credentials and RADIUS keys obtained
+    match_properties:
+    - CiscoNXOS
+    - Switch
+    - NetworkDevice
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.CiscoNXOS_CMDInject
+    type: LOCAL
+    description: CVE-2020-3517 — Cisco NX-OS command injection via NX-API.
+    cost: 1.0
+    success_rate: 0.75
+    reward: NX-OS NX-API command injection — arbitrary OS command execution obtained
+    match_properties:
+    - CiscoNXOS
+    - Switch
+    - NetworkDevice
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.SAM_Dump
+    type: LOCAL
+    description: Windows SAM registry hive dump for local account NTLM hash extraction.
+    cost: 0.5
+    success_rate: 0.7
+    reward: SAM hive dumped — local account NTLM hashes extracted for cracking
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+  - name: Solvability.HiveNightmare
+    type: LOCAL
+    description: CVE-2021-36934 — Windows SAM/SYSTEM/SECURITY hive ACL misconfiguration
+      allows unprivileged read.
+    cost: 0.5
+    success_rate: 0.78
+    reward: HiveNightmare — SAM/SYSTEM hive read by non-admin user, NTLM hashes extracted
+    match_properties:
+    - Windows
+    - Workstation
+    - Unpatched
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  discovery:
+  - name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: Reads Cisco CDP or LLDP neighbor table from compromised network device.
+    cost: 0.5
+    success_rate: 0.8
+    reward: CDP/LLDP neighbor table read — adjacent Z2/Z1 network devices enumerated
+    match_properties:
+    - Router
+    - CiscoIOS
+    - NetworkDevice
+    probability: 0.7
+    target_coverage: 0.5
+    min_targets: 1
+  goal_access:
+  - name: Solvability.DCSync
+    type: LOCAL
+    description: DS-Replication-Get-Changes-All abuse — dump all NTLM hashes including
+      krbtgt.
+    cost: 0.5
+    success_rate: 0.6
+    reward: DCSync domain hash dump — all NTLM hashes extracted from DomainController
+      (TERMINAL)
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  - name: Solvability.NTDS_Dump
+    type: LOCAL
+    description: Extract NTDS.dit via Volume Shadow Copy and offline decrypt all domain
+      hashes.
+    cost: 1.0
+    success_rate: 0.6
+    reward: NTDS.dit extracted — full domain hash database obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.7
+    goal_category: dump
+  - name: Solvability.GoldenTicket
+    type: LOCAL
+    description: Forge Kerberos Golden Ticket with extracted krbtgt hash — persistent
+      DA access.
+    cost: 1.0
+    success_rate: 0.55
+    reward: Golden Ticket forged — persistent domain admin Kerberos TGT valid for
+      10 years
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.65
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC1
+    type: LOCAL
+    description: ADCS ESC1 certificate template SAN abuse → DA certificate → DCSync.
+    cost: 0.5
+    success_rate: 0.6
+    reward: ADCS ESC1 domain takeover — DA certificate PKINIT and DCSync executed
+      (TERMINAL)
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC6
+    type: LOCAL
+    description: ADCS ESC6 — EDITF_ATTRIBUTESUBJECTALTNAME2 flag enables arbitrary
+      SAN on any template.
+    cost: 1.0
+    success_rate: 0.58
+    reward: ADCS ESC6 — domain admin certificate via arbitrary SAN on CA
+    match_properties:
+    - Windows
+    - ADCS
+    - DomainController
+    probability: 0.65
+    goal_category: privesc
+  - name: Solvability.DCShadow
+    type: LOCAL
+    description: DCShadow — register rogue DC and push arbitrary AD attribute changes.
+    cost: 1.5
+    success_rate: 0.55
+    reward: DCShadow replication — arbitrary AD attributes written, persistence established
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.6
+    goal_category: privesc
+  - name: Solvability.DSRM_Abuse
+    type: LOCAL
+    description: DSRM password abuse — use Directory Services Restore Mode hash for
+      persistent DA access.
+    cost: 1.0
+    success_rate: 0.7
+    reward: DSRM hash abuse — persistent domain admin backdoor via DSRM account
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.65
+    goal_category: dump
+  lateral_movement:
+  - name: Solvability.NTLM_Relay_SMB
+    type: REMOTE
+    description: CVE-2024-21410 — Exchange NTLM relay → RBCD write. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.72
+    reward: Exchange NTLM relay (CVE-2024-21410) — RBCD written to machine account,
+      DC path unlocked
+    match_properties:
+    - Windows
+    - MailServer
+    probability: 0.75
+  - name: Solvability.PassTheHash
+    type: LOCAL
+    description: NTLM Pass-the-Hash lateral movement to domain-joined hosts without
+      LAPS.
+    cost: 0.5
+    success_rate: 0.65
+    reward: Pass-the-Hash succeeded — local admin SMB session on LAPS-absent neighbor
+    match_properties:
+    - Windows
+    - NoLAPS
+    - DomainJoined
+    probability: 0.7
+    target_coverage: 0.4
+    min_targets: 1
+services:
+  ISPRouter:
+    port: SNMP
+    value: 500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Router
+    - CiscoIOS
+    - SNMP
+    - NetworkDevice
+    - Misconfigured
+    is_goal: false
+  CiscoASA:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Firewall
+    - CiscoASA
+    - NetworkDevice
+    - SNMP
+    - Misconfigured
+    - SSLVPN
+    is_goal: false
+  F5LoadBalancer:
+    port: HTTPS
+    value: 2000
+    allowed_os:
+    - Linux
+    default_properties:
+    - LoadBalancer
+    - F5BIGIP
+    - NetworkDevice
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  PaloAltoFirewall:
+    port: HTTPS
+    value: 2500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Firewall
+    - PaloAlto
+    - PANOS
+    - GlobalProtect
+    - NetworkDevice
+    - Misconfigured
+    is_goal: false
+  FortiGateAppliance:
+    port: HTTPS
+    value: 2500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Firewall
+    - FortiGate
+    - SSLVPN
+    - NetworkDevice
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  CiscoNXOS:
+    port: SSH
+    value: 3500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Switch
+    - CiscoNXOS
+    - NetworkDevice
+    - SNMP
+    - Misconfigured
+    is_goal: false
+  CiscoFirepower:
+    port: HTTPS
+    value: 4000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Firewall
+    - CiscoFirepower
+    - NetworkDevice
+    - Misconfigured
+    is_goal: false
+  SalesWorkstation:
+    port: RDP
+    value: 1000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - Unpatched
+    - NTLMRelayable
+    is_goal: false
+  AdminWorkstation:
+    port: RDP
+    value: 2500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - LocalAdmin
+    - DomainAdmin
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  PrintServer:
+    port: SMB
+    value: 3000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - PrintServer
+    - DomainJoined
+    - Unpatched
+    is_goal: false
+  FileServer:
+    port: SMB
+    value: 3000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - FileServer
+    - DomainJoined
+    - Misconfigured
+    - SMB
+    - DatabaseServer
+    - Unpatched
+    is_goal: false
+  ExchangeServer:
+    port: HTTPS
+    value: 4500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - MailServer
+    - DomainJoined
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  ADCS_Server:
+    port: HTTPS
+    value: 5500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2022
+    - ADCS
+    - DomainJoined
+    - Unpatched
+    is_goal: false
+  DomainController:
+    port: LDAP
+    value: 10000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2022
+    - DomainController
+    - DomainJoined
+    - ADCS
+    - DomainAdmin
+    - DatabaseServer
+    - Unpatched
+    is_goal: true
+  WAFAppliance:
+    port: HTTPS
+    value: 1000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Firewall
+    - CiscoASA
+    - WAF
+    - NetworkDevice
+    - Misconfigured
+    - Unpatched
+    is_goal: false
+  MikroTikRouter:
+    port: Telnet
+    value: 500
+    allowed_os:
+    - Linux
+    default_properties:
+    - NetworkDevice
+    - Router
+    - CiscoIOS
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+domains:
+- name: InternetEdge
+  subnet: 10.0.1.0/24
+  filler:
+  - WAFAppliance
+  - CiscoASA
+  mandatory_services:
+  - ISPRouter
+  - WAFAppliance
+  - CiscoASA
+  - F5LoadBalancer
+  - PaloAltoFirewall
+  groups:
+  - name: ISPRouters
+    service: ISPRouter
+    min_count: 1
+    max_count: 4
+  - name: WAFs
+    service: WAFAppliance
+    min_count: 2
+    max_count: 8
+  - name: CiscoASAs
+    service: CiscoASA
+    min_count: 1
+    max_count: 6
+  - name: F5LoadBalancers
+    service: F5LoadBalancer
+    min_count: 1
+    max_count: 6
+  - name: PaloAltoFirewalls
+    service: PaloAltoFirewall
+    min_count: 1
+    max_count: 6
+  - name: MikroTikRouters
+    service: MikroTikRouter
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: WAFs
+    target: Unpatched
+    relation: MUST_HAVE
+  - source: F5LoadBalancers
+    target: Unpatched
+    relation: MUST_HAVE
+  - source: ISPRouters
+    target: Misconfigured
+    relation: MUST_HAVE
+  - source: ISPRouters
+    target: WAFs
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: WAFs
+    target: CiscoASAs
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: CiscoASAs
+    target: PaloAltoFirewalls
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- name: HQ_Edge
+  subnet: 10.0.2.0/24
+  filler:
+  - CiscoNXOS
+  - FortiGateAppliance
+  mandatory_services:
+  - FortiGateAppliance
+  - CiscoNXOS
+  - CiscoFirepower
+  groups:
+  - name: FortiGateAppliances
+    service: FortiGateAppliance
+    min_count: 2
+    max_count: 10
+  - name: CiscoNXOSSwitches
+    service: CiscoNXOS
+    min_count: 2
+    max_count: 12
+  - name: CiscoFirepowers
+    service: CiscoFirepower
+    min_count: 1
+    max_count: 6
+  constraints:
+  - source: FortiGateAppliances
+    target: Unpatched
+    relation: MUST_HAVE
+  - source: CiscoNXOSSwitches
+    target: Misconfigured
+    relation: MUST_HAVE
+  - source: FortiGateAppliances
+    target: CiscoNXOSSwitches
+    relation: MUST_CONNECT
+    protocol: HTTPS
+- name: Z1_ServerFarm
+  subnet: 10.1.10.0/24
+  filler:
+  - SalesWorkstation
+  - FileServer
+  mandatory_services:
+  - SalesWorkstation
+  - AdminWorkstation
+  - PrintServer
+  - FileServer
+  - ExchangeServer
+  - ADCS_Server
+  - DomainController
+  groups:
+  - name: SalesWorkstations
+    service: SalesWorkstation
+    min_count: 3
+    max_count: 15
+  - name: AdminWorkstations
+    service: AdminWorkstation
+    min_count: 2
+    max_count: 12
+  - name: PrintServers
+    service: PrintServer
+    min_count: 1
+    max_count: 6
+  - name: FileServers
+    service: FileServer
+    min_count: 2
+    max_count: 10
+  - name: ExchangeServers
+    service: ExchangeServer
+    min_count: 1
+    max_count: 6
+  - name: ADCS_Servers
+    service: ADCS_Server
+    min_count: 1
+    max_count: 4
+  - name: DomainControllers
+    service: DomainController
+    min_count: 1
+    max_count: 4
+  constraints:
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: ADCS_Servers
+    target: ADCS
+    relation: MUST_HAVE
+  - source: FileServers
+    target: Misconfigured
+    relation: MUST_HAVE
+  - source: AdminWorkstations
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: SalesWorkstations
+    target: AdminWorkstations
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: PrintServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: ExchangeServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: ADCS_Servers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: FileServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: SMB
+inter_domain_constraints:
+- source_domain: InternetEdge
+  target_domain: HQ_Edge
+  constraints:
+  - source: CiscoASAs
+    target: FortiGateAppliances
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: PaloAltoFirewalls
+    target: FortiGateAppliances
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: F5LoadBalancers
+    target: CiscoNXOSSwitches
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: WAFs
+    target: CiscoNXOSSwitches
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: HTTPS
+  - source: CiscoASAs
+    target: CiscoFirepowers
+    relation: KNOWS
+- source_domain: HQ_Edge
+  target_domain: Z1_ServerFarm
+  constraints:
+  - source: CiscoNXOSSwitches
+    target: SalesWorkstations
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: FortiGateAppliances
+    target: SalesWorkstations
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: CiscoNXOSSwitches
+    target: AdminWorkstations
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: SMB
+entry_points:
+- domain: InternetEdge
+  node: ISPRouters
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.5
+  auto_fix_enabled: true
+  auto_fix_strategies:
+  - add_remote_vulnerability_to_entry
+  - add_credential_leakage
+  - add_lateral_movement_vulnerabilities

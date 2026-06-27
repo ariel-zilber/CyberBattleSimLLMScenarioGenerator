@@ -80,6 +80,36 @@ The valid `solvability_vulnerabilities` categories depend on `metadata.agent`. U
 
 ---
 
+## COVERAGE REQUIREMENT — ALL 50 SPECIALIST ACTION SLOTS MUST APPEAR
+
+Every config for a specialist agent MUST include every vulnerability identifier listed in
+that agent's spec file (Local Vulnerabilities + Remote Vulnerabilities tables). A config
+that omits any slot is **MALFORMED** and will be rejected by `02_config_checker.py`
+(`check_specialist_vocab_coverage`). Do not satisfy this with `success_rate` below `0.05` —
+the checker treats sub-0.05 as absent. Every slot must be attached to at least one service
+node under a solvability category valid for this agent.
+
+For **connect port slots**: every port in the agent's Connect Ports table must appear as a
+`port:` field on at least one service node in the topology. Missing ports = dead connect
+actions = dead gradient on those slots.
+
+Slot counts (local / remote / connect = 50):
+
+| Agent | Local | Remote | Connect | Total |
+|---|---|---|---|---|
+| `S_Network` | 18 | 14 | 18 | 50 |
+| `S_Linux` | 19 | 17 | 14 | 50 |
+| `S_Windows` | 12 | 21 | 17 | 50 |
+| `S_Identity` | 15 | 16 | 19 | 50 |
+| `S_Lateral` | 34 | 4 | 12 | 50 |
+
+Distribute vulns semantically — FortiGate vulns on FortiGate nodes, Docker escape vulns on
+container nodes, MSSQL vulns on MSSQL nodes. Assign remaining slots to existing node types
+at `success_rate: 0.05`–`0.15`. Do **not** invent phantom nodes solely to host slots — use
+nodes the topology already requires.
+
+---
+
 ## CRITICAL SCHEMA RULES
 
 Four structural rules that cause parser crashes if violated — see `anti_patterns.md` for full before/after examples:

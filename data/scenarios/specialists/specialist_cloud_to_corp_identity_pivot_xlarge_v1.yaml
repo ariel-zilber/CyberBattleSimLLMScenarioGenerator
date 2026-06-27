@@ -1,0 +1,1127 @@
+metadata:
+  scenario_id: SPECIALIST-SPECIALIST-META-CLOUD-TO-CORP-IDENTITY-PIVOT-XLARGE-V1
+  agent: Meta
+  training_mode: specialist_meta
+  zones:
+  - Z6_AWSCloud
+  - Z1_HQVLANs
+  - Z1_ServerFarm
+  - Z8_KeyMgmt
+  terminal_goal: CyberArkPAM
+  intermediate_goals:
+  - name: DomainController
+    value: 6000
+    reason: 'High-value AD hub — owning DC unlocks Z8 path but episode does NOT terminate.
+      Agent must learn the DC is an intermediate milestone, not the final goal.
+
+      '
+  - name: AWSAppServer
+    value: 2500
+    reason: Cloud AppTier milestone — IAM credential extraction point for Z6→Z1 bridge
+  - name: AdminWorkstation
+    value: 1500
+    reason: S_Lateral milestone — cloud-to-corp lateral pivot via IAM relay into Windows
+      admin host; gates DomainController path
+  node_range:
+  - 700
+  - 950
+  attack_path:
+  - Probe — fingerprint AWSWebServer in Z6 WebTier (breach node, public IP)
+  - Z6 WebTier exploit — Nginx_Linux_Critical (CVE-2025-15467, SR 0.90) on AWSWebServer
+  - Z6 AppTier exploit — Vault_GoStdlib (CVE-2024-41110, SR 0.90) on AWSAppServer
+    → AppServer RCE
+  - Z6 credential extract — Container_EnvVars on AWSAppServer extracts AD-federated
+    IAM token
+  - Z6→Z1 bridge — CloudIAM_LDAP_Write (SR 0.65) uses IAM token to write RBCD on DomainController
+  - Z1 lateral — Kerberoasting (SR 0.60) on domain-joined workstations
+  - Z1 DC — Certifried (CVE-2022-26923, SR 0.88) + noPac (CVE-2021-42287, SR 0.75)
+  - 'DCSync on DomainController (value 6000, is_goal: false) — episode continues'
+  - DC→Z8 — ADCS_CertSpoof_Lateral (CVE-2022-34691, SR 0.88) → CyberArkPAM auth
+  - TERMINAL — CyberArkPAM owned (value 10000, Z8)
+  notes: 'Specialist-meta dataset variant: Cloud-to-corporate identity pivot scenario
+    emphasizing Linux/cloud compromise, credential relay, and AD escalation.
+
+    Size stratum: xlarge; target node range 700-950; target goal count approximately
+    8.
+
+    Intended specialist emphasis: S_Linux, S_Identity, S_Lateral. Optional/supporting
+    specialists: S_Network, S_Windows.
+
+    Each generated instance should contain meaningful causal segments for 3-4 specialist
+    domains,
+
+    include at least one bridge role from S_Identity or S_Lateral, and preserve the
+    GLOBALTECH
+
+    reference architecture with external/perimeter, HQ edge, internal/server-farm,
+    branch/cloud,
+
+    and management or crown-jewel context. Decoys and supporting assets are allowed
+    but must not
+
+    dominate or block the main multi-specialist paths.
+
+    DomainController is is_goal: false (value 6000). Episode does NOT terminate there.
+
+    CyberArkPAM is is_goal: true (value 10000). Must NOT have Unauthenticated property.
+
+    AWSPostgreSQL (Alpine) has zero REMOTE CVEs — credential-only access from WorkerNode.
+
+    IdentityProvider property on DomainController enables CloudIAM_LDAP_Write Z6→Z1
+    bridge.
+
+    The three-domain structure teaches the cloud→corp→PAM kill chain pattern.
+
+    '
+  source_template: /home/ariel/Documents/thesis/CyberBattleSimLLMScenarioGenerator/data/scenarios/specialist_meta/meta_cloud_to_corp_identity_pivot_xlarge_v1.yaml
+  fixed_specialists:
+  - s_network
+  - s_linux
+  - s_windows
+  - s_identity
+  - s_lateral
+  vocabulary_source: /home/ariel/Documents/thesis/CyberBattleSim/cyberbattle/data/global_vocabulary.yaml
+config:
+  min_total_nodes: 700
+  max_total_nodes: 950
+  goal_config:
+    num_goals: 3
+    selection_strategy: diverse
+identifiers:
+  standard_ports:
+  - DNS
+  - HTTP
+  - HTTPS
+  - Kerberos
+  - LDAP
+  - LDAPS
+  - MSSQL
+  - MySQL
+  - PostgreSQL
+  - RDP
+  - SMB
+  - SSH
+  - WinRM
+  - SMTP
+  - WMI
+  base_properties:
+  - breach_node
+  - ADCS
+  - AWS
+  - Alpine
+  - AppServer
+  - CloudInstance
+  - DatabaseServer
+  - Debian
+  - DomainAdmin
+  - DomainController
+  - DomainJoined
+  - FileServer
+  - HTTP
+  - IdentityProvider
+  - Kerberoastable
+  - Linux
+  - LocalAdmin
+  - MailServer
+  - Misconfigured
+  - NginxServer
+  - NoLAPS
+  - PrintServer
+  - SMB
+  - Unpatched
+  - WebServer
+  - Win10
+  - Win2019
+  - Win2022
+  - Windows
+  - WorkerNode
+  - Workstation
+os_management_ports:
+  Windows: RDP
+  Linux: SSH
+  default: HTTPS
+start_node:
+  subnet: 0.0.0.0/0
+  ip: 203.0.113.10
+  properties:
+  - breach_node
+  default_entry_port: HTTPS
+  preferred_entry_ports:
+  - HTTPS
+  - HTTP
+  entry_node_count: 1
+  leaked_node_coverage: 0.15
+  min_leaked_nodes: 2
+  port_selection: random
+  vulnerabilities:
+    discovery:
+      name: Solvability.LDAP_Enum
+      type: LOCAL
+      description: 'Cloud infrastructure enumeration: AWS asset discovery via Shodan/Censys,
+        EC2 metadata endpoint probing, and publicly exposed ALB/NginX identifying
+        GLOBALTECH AWS web tier in Z6. Identifies nginx version and libcrypto exposure.
+
+        '
+      cost: 0.5
+      success_rate: 0.85
+      reward: GLOBALTECH AWS cloud stack fingerprinted — Z6 WebTier nginx/libcrypto
+        version and ALB ARN identified
+    credential_leak:
+      name: Solvability.SSH_PrivKey_Theft
+      type: LOCAL
+      description: 'Credential phishing targeting GLOBALTECH cloud engineers — fake
+        AWS Console login page harvests one IAM access key for initial Z6 foothold.
+
+        '
+      cost: 1.5
+      success_rate: 0.65
+      reward: AWS IAM access key obtained via phishing — initial Z6 WebTier foothold
+        credential acquired
+attack_flow:
+- source_pattern: AWSWebServer
+  targets:
+  - AWSAppServer
+  - AWSRedis
+- source_pattern: AWSAppServer
+  targets:
+  - AWSWorkerNode
+  - AWSPostgreSQL
+- source_pattern: AWSWorkerNode
+  targets:
+  - AWSPostgreSQL
+- source_pattern: AWSPostgreSQL
+  targets:
+  - AdminWorkstation
+  - DomainController
+- source_pattern: AdminWorkstation
+  targets:
+  - ExchangeServer
+  - FileServer
+- source_pattern: ExchangeServer
+  targets:
+  - DomainController
+- source_pattern: FileServer
+  targets:
+  - DomainController
+- source_pattern: DomainController
+  targets:
+  - CyberArkPAM
+constraint_vulnerabilities:
+  leak_known_credentials:
+    name: Solvability.PassTheHash
+    type: LOCAL
+    description: 'Hybrid cloud-corporate credential relay: container env vars with
+      AD-federated IAM tokens, NTLM hash capture from domain-joined workstations,
+      and LSASS dump on compromised Windows nodes.
+
+      '
+    cost: 0.5
+    success_rate: 0.7
+    reward: Cross-zone credential relayed from {target} — cloud IAM or domain credential
+      obtained
+    node_probability: 0.25
+    target_coverage: 0.25
+    min_targets: 2
+    default_port: HTTPS
+  leak_neighbors:
+    name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: 'Multi-surface network discovery: container network scanning, ARP
+      cache, LDAP queries, and AWS VPC flow log analysis to identify adjacent hosts.
+
+      '
+    cost: 0.5
+    success_rate: 0.85
+    reward: Adjacent node {target} discovered via container/ARP/LDAP enumeration
+    node_probability: 0.6
+    target_coverage: 0.5
+    min_targets: 2
+probe_vulnerabilities:
+- name: Solvability.NodeJS_IP_SSRF
+  os: Linux
+  type: REMOTE
+  description: SSH banner, HTTP server header, and container metadata fingerprint
+    to identify Linux distribution, runtime version, and cloud provider.
+  cost: 0.5
+  success_rate: 1.0
+- name: Solvability.WSD_RCE
+  os: Windows
+  type: REMOTE
+  description: SMB/RDP banner and LDAP signing check to identify Windows OS version,
+    patch level, and domain membership.
+  cost: 0.5
+  success_rate: 0.9
+solvability_vulnerabilities:
+  remote_access:
+  - name: Solvability.Concourse_ContainerEscape
+    type: REMOTE
+    description: 'Linux AppServer container escape — Z6 AWSWebServer compromised via — nginx libcrypto3 CRITICAL vulnerability. CVSS 9.8.
+      Memory corruption in libcrypto3 used by nginx enables unauthenticated RCE on
+      Z6 WebTier AWSWebServer containers.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Nginx libcrypto3 RCE (CVE-2025-15467) — shell on AWSWebServer Z6 WebTier
+      container
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.85
+  - name: Solvability.ProxyShell
+    type: REMOTE
+    description: 'CVE-2024-41110 — HashiCorp Vault Go stdlib CRITICAL vulnerability.
+      CVSS 9.9. Remote code execution via Go standard library memory corruption in
+      Vault API, granting shell on AppTier containers.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Vault GoStdlib RCE (CVE-2024-41110) — shell on AWSAppServer, AppServer
+      secrets accessible
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.8
+  - name: Solvability.Zlib_IntOverflow
+    type: REMOTE
+    description: 'CVE-2025-49794 — Cilium libxml2 CRITICAL vulnerability. CVSS 9.1.
+      Network policy bypass enabling direct AppTier container compromise.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: Cilium libxml2 RCE (CVE-2025-49794) — AppServer container compromised
+      via network policy bypass
+    match_properties:
+    - Linux
+    - AppServer
+    probability: 0.7
+  - name: Solvability.WSD_RCE
+    type: REMOTE
+    description: 'CVE-2023-28250 — Windows WSD RCE. CVSS 9.8. Unauthenticated stack
+      overflow via PGM service on Win10 workstations in Z1.
+
+      '
+    cost: 1.0
+    success_rate: 0.9
+    reward: WSD RCE (CVE-2023-28250) — SYSTEM shell on Z1 AdminWorkstation
+    match_properties:
+    - Windows
+    - Workstation
+    probability: 0.75
+  - name: Solvability.Certifried
+    type: REMOTE
+    description: 'CVE-2022-26923 — Certifried ADCS privilege escalation. CVSS 8.8.
+      dNSHostName manipulation to impersonate DC and enroll DA certificate.
+
+      '
+    cost: 1.5
+    success_rate: 0.88
+    reward: Certifried ADCS privesc (CVE-2022-26923) — DA certificate obtained via
+      DC impersonation
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.75
+  - name: Solvability.noPac
+    type: REMOTE
+    description: 'CVE-2021-42287 — noPac SAM Account Name impersonation. CVSS 7.5.
+      Domain user requests DA TGT via sAMAccountName spoofing.
+
+      '
+    cost: 1.5
+    success_rate: 0.75
+    reward: noPac impersonation (CVE-2021-42287) — DA TGT obtained without local admin
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.JavaDeserialize_RCE_2
+    type: REMOTE
+    description: CVE-2021-44228 — Log4Shell Java deserialization RCE via JNDI lookup.
+      CVSS 10.0. CISA KEV.
+    cost: 1.0
+    success_rate: 0.75
+    reward: Log4Shell Java deserialization RCE — remote code execution on Java app
+      server
+    match_properties:
+    - Linux
+    - AppServer
+    - Unpatched
+    probability: 0.7
+  - name: Solvability.GhostCMS_CSV_Injection
+    type: REMOTE
+    description: CVE-2023-40028 — Ghost CMS arbitrary file read RCE. CVSS 7.2.
+    cost: 1.0
+    success_rate: 0.38
+    reward: Ghost CMS file read RCE — admin credential and config file extracted
+    match_properties:
+    - Linux
+    - WebServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.ApacheAvro_Deserialization
+    type: REMOTE
+    description: CVE-2023-37475 — Apache Avro Java SDK deserialization RCE. CVSS 9.8.
+    cost: 1.0
+    success_rate: 0.9
+    reward: Avro deserialization RCE — remote code execution on data pipeline service
+    match_properties:
+    - Linux
+    - AppServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.LibSSH_OpenSSL_RCE
+    type: REMOTE
+    description: CVE-2023-38408 — libssh-agent OpenSSL provider loading RCE. CVSS
+      9.8.
+    cost: 1.0
+    success_rate: 0.85
+    reward: libssh OpenSSL provider RCE — code execution via malicious shared library
+      load
+    match_properties:
+    - Linux
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.GoGoProtobuf_Deserialization
+    type: REMOTE
+    description: CVE-2021-3121 — gogo/protobuf Go deserialization panic/RCE. CVSS
+      9.8.
+    cost: 1.0
+    success_rate: 0.86
+    reward: GoGoProtobuf deserialization RCE — code execution on Go microservice
+    match_properties:
+    - Linux
+    - AppServer
+    - Unpatched
+    probability: 0.65
+  - name: Solvability.PetitPotam
+    type: REMOTE
+    description: CVE-2021-36942 — PetitPotam unauthenticated LSARPC coercion. CVSS
+      9.8. CISA KEV.
+    cost: 1.0
+    success_rate: 0.75
+    reward: PetitPotam coercion — DC machine account auth coerced for NTLM relay to
+      ADCS
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.65
+  - name: Solvability.NetNTLMv2_Downgrade
+    type: REMOTE
+    description: CVE-2019-1040 — NetNTLMv2 downgrade attack drop MIC for relay. CVSS
+      5.9. CISA KEV.
+    cost: 1.0
+    success_rate: 0.8
+    reward: NetNTLMv2 downgrade — MIC removed, NTLM relay to LDAP/SMB without signing
+    match_properties:
+    - Windows
+    - Unpatched
+    probability: 0.65
+  credential_leak:
+  - name: Solvability.Container_EnvVars
+    type: LOCAL
+    description: 'Enumerate container environment variables for cloud secrets: AWS
+      access keys, AD-federated IAM tokens, and database connection strings injected
+      as K8s Secrets.'
+    cost: 0.5
+    success_rate: 0.6
+    reward: Container env vars extracted — AWS IAM token and AD-federated credential
+      obtained for Z6→Z1 bridge
+    match_properties:
+    - Linux
+    probability: 0.22
+  - name: Solvability.Redis_NoAuth
+    type: LOCAL
+    description: Connect to unauthenticated HTTP instance — no-auth default config
+      exposes all cached data including session tokens and AD credentials.
+    cost: 0.5
+    success_rate: 0.8
+    reward: HTTP NoAuth credential dump — session tokens and cached AD credentials
+      extracted from AWSRedis
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - HTTP
+    - Misconfigured
+    probability: 0.22
+  - name: Solvability.Mimikatz_NTLM
+    type: LOCAL
+    description: Dump NTLM hashes from LSASS using Mimikatz sekurlsa::logonpasswords
+      on compromised Z1 Windows nodes.
+    cost: 0.5
+    success_rate: 0.65
+    reward: NTLM hashes dumped from Z1 LSASS — domain user and service account hashes
+      obtained
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.22
+  - name: Solvability.Kerberoasting
+    type: LOCAL
+    description: Request TGS tickets for SPN-registered service accounts — offline
+      hash cracking reveals service account passwords.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Kerberoasting hashes cracked — service account password exposed for DC
+      lateral movement
+    match_properties:
+    - Windows
+    - Kerberoastable
+    - DomainJoined
+    probability: 0.22
+  - name: Solvability.AWS_CredFile
+    type: LOCAL
+    description: AWS credential file extraction (~/.aws/credentials) from compromised
+      cloud instance.
+    cost: 0.5
+    success_rate: 0.75
+    reward: AWS credential file extracted — access_key_id and secret_access_key obtained
+    match_properties:
+    - Linux
+    - AWS
+    - CloudInstance
+    probability: 0.7
+    target_coverage: 0.5
+    min_targets: 1
+  - name: Solvability.VaultToken_EnvVar
+    type: LOCAL
+    description: HashiCorp Vault token extraction from environment variables or process
+      memory.
+    cost: 0.5
+    success_rate: 0.7
+    reward: Vault token extracted — HashiCorp Vault root/admin token obtained from
+      env vars
+    match_properties:
+    - Linux
+    - AppServer
+    - CloudInstance
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.KubeServiceAccount
+    type: LOCAL
+    description: Kubernetes service account token extraction from /var/run/secrets/kubernetes.io/.
+    cost: 0.5
+    success_rate: 0.7
+    reward: Kubernetes SA token extracted — cluster API access obtained from mounted
+      secret
+    match_properties:
+    - Linux
+    - CloudInstance
+    probability: 0.65
+    target_coverage: 0.45
+    min_targets: 1
+  - name: Solvability.MongoDB_NoAuth
+    type: LOCAL
+    description: MongoDB unauthenticated access — dump all databases from no-auth
+      MongoDB instance.
+    cost: 0.5
+    success_rate: 0.75
+    reward: MongoDB noauth dump — all database contents including credentials extracted
+    match_properties:
+    - Linux
+    - DatabaseServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  - name: Solvability.Keycloak_AdminCreds
+    type: LOCAL
+    description: Keycloak admin credentials extraction from misconfigured H2 DB or
+      admin API.
+    cost: 1.0
+    success_rate: 0.65
+    reward: Keycloak admin credentials extracted — identity provider admin access
+      obtained
+    match_properties:
+    - Linux
+    - AppServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.35
+    min_targets: 1
+  - name: Solvability.Vault_Unsealed
+    type: LOCAL
+    description: HashiCorp Vault unsealed secret extraction — read all secrets from
+      unsealed Vault instance.
+    cost: 1.0
+    success_rate: 0.55
+    reward: Vault secrets extracted — all secrets including cloud credentials and
+      API keys obtained
+    match_properties:
+    - Linux
+    - AppServer
+    - Misconfigured
+    probability: 0.65
+    target_coverage: 0.4
+    min_targets: 1
+  discovery:
+  - name: Solvability.BloodHound_Recon
+    type: LOCAL
+    description: nmap/masscan inside compromised container — discovers adjacent Z6
+      container IPs, VPC subnets, and Z1 corp network ranges reachable via AWS VPN.
+    cost: 0.5
+    success_rate: 0.8
+    reward: Container network scan complete — Z6 container mesh and Z1 corp VPN ranges
+      discovered
+    match_properties:
+    - Linux
+    probability: 0.85
+  - name: Solvability.LDAP_Enum
+    type: LOCAL
+    description: 'LDAP queries for all AD objects: users, SPNs, ADCS templates, delegation
+      configs, and cloud-federated identity settings.'
+    cost: 0.5
+    success_rate: 0.8
+    reward: LDAP enumeration complete — IdentityProvider DomainController identified,
+      ADCS templates mapped
+    match_properties:
+    - Windows
+    - DomainController
+    probability: 0.8
+  goal_access:
+  - name: Solvability.DCSync
+    type: LOCAL
+    description: DCSync via Mimikatz dcsync on owned DomainController — extracts all
+      NTLM hashes including krbtgt for Golden Ticket.
+    cost: 0.5
+    success_rate: 0.6
+    reward: DCSync complete — all domain NTLM hashes extracted, krbtgt hash obtained
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  - name: Solvability.GoldenTicket
+    type: LOCAL
+    description: Golden Ticket forge using extracted krbtgt hash — persistent 10-year
+      domain admin TGT.
+    cost: 1.0
+    success_rate: 0.55
+    reward: Golden Ticket forged — persistent DA TGT created from krbtgt hash
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainAdmin
+    probability: 0.65
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC1
+    type: LOCAL
+    description: ADCS ESC1 goal-stage — DA cert PKINIT auth → DCSync → Z8 CyberArkPAM
+      access unlocked.
+    cost: 0.5
+    success_rate: 0.6
+    reward: ADCS ESC1 domain takeover — DA cert obtained, Z8 CyberArkPAM path established
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+    goal_category: privesc
+  - name: Solvability.ADCS_ESC8
+    type: LOCAL
+    description: Read all secrets from CyberArkPAM vault — extracts all privileged
+      account credentials, SSH keys, and API tokens from enterprise PAM.
+    cost: 0.5
+    success_rate: 0.55
+    reward: CyberArkPAM vault dumped — all privileged credentials exfiltrated, TERMINAL
+      GOAL achieved
+    match_properties:
+    - Linux
+    - AppServer
+    - DomainAdmin
+    probability: 0.75
+    goal_category: dump
+  - name: Solvability.ASREPRoasting
+    type: REMOTE
+    description: AS-REP Roasting — request AS-REP for Kerberos pre-auth disabled accounts
+      without credentials.
+    cost: 0.5
+    success_rate: 0.55
+    reward: AS-REP Roast — offline crackable AS-REP hashes obtained for AD accounts
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.PrinterBug_Coercion
+    type: REMOTE
+    description: MS-RPRN printer bug — coerce domain-joined host authentication for
+      NTLM relay.
+    cost: 1.0
+    success_rate: 0.72
+    reward: Printer bug coercion — target host authentication coerced for relay or
+      unconstrained delegation
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.UnconstrainedDelegation
+    type: REMOTE
+    description: Unconstrained Kerberos delegation abuse — capture TGT from coerced
+      DC authentication.
+    cost: 1.0
+    success_rate: 0.65
+    reward: Unconstrained delegation TGT capture — DC TGT harvested from forced authentication
+    match_properties:
+    - Windows
+    - DomainJoined
+    - Kerberoastable
+    probability: 0.6
+  - name: Solvability.ShadowCredentials
+    type: REMOTE
+    description: Shadow Credentials attack — write msDS-KeyCredentialLink for PKINIT-based
+      authentication.
+    cost: 1.0
+    success_rate: 0.7
+    reward: Shadow credentials — PKINIT certificate backdoor on AD object for persistent
+      access
+    match_properties:
+    - Windows
+    - DomainJoined
+    - DomainAdmin
+    probability: 0.65
+  - name: Solvability.ConstrainedDelegation_S4U
+    type: LOCAL
+    description: Constrained delegation S4U2Proxy abuse — forge service tickets for
+      other services.
+    cost: 1.0
+    success_rate: 0.6
+    reward: S4U2Proxy service ticket forged — access to target service as domain admin
+    match_properties:
+    - Windows
+    - DomainJoined
+    - Kerberoastable
+    probability: 0.65
+  - name: Solvability.RBCD_Attack
+    type: LOCAL
+    description: Resource-Based Constrained Delegation attack — abuse RBCD for S4U2Self
+      impersonation.
+    cost: 1.0
+    success_rate: 0.65
+    reward: RBCD attack — domain admin service ticket via S4U2Self impersonation
+    match_properties:
+    - Windows
+    - DomainJoined
+    probability: 0.65
+  - name: Solvability.SilverTicket
+    type: LOCAL
+    description: Silver Ticket — forge TGS using extracted service account NTLM hash.
+    cost: 1.0
+    success_rate: 0.6
+    reward: Silver ticket forged — persistent service access via forged TGS without
+      KDC contact
+    match_properties:
+    - Windows
+    - DomainJoined
+    - Kerberoastable
+    probability: 0.6
+  - name: Solvability.TokenImpersonation
+    type: LOCAL
+    description: Windows access token impersonation — steal and impersonate a privileged
+      token.
+    cost: 1.0
+    success_rate: 0.7
+    reward: Token impersonation — elevated access via stolen domain admin token
+    match_properties:
+    - Windows
+    - DomainJoined
+    - LocalAdmin
+    probability: 0.65
+  lateral_movement:
+  - name: Solvability.NTLM_Relay_SMB
+    type: REMOTE
+    description: 'CVE-2024-21410 — Exchange NTLM credential relay. CVSS 9.8. RBCD
+      write via relayed Exchange NTLM for domain admin escalation.
+
+      '
+    cost: 1.0
+    success_rate: 0.72
+    reward: Exchange NTLM relay (CVE-2024-21410) — RBCD written, DA path unlocked
+    match_properties:
+    - Windows
+    - MailServer
+    probability: 0.75
+  - name: Solvability.CloudIAM_LDAP_Write
+    type: LOCAL
+    description: Cloud IAM token → AD Seamless SSO LDAP write. Use cloud-federated
+      IAM token to write RBCD attribute on DomainController via Azure AD Seamless
+      SSO / AD Connect. Z6→Z1 crossing technique.
+    cost: 1.5
+    success_rate: 0.65
+    reward: CloudIAM LDAP write succeeded — RBCD attribute written on DomainController
+      via federated IAM token, Z1 domain compromisable
+    match_properties:
+    - Windows
+    - DomainController
+    - DomainJoined
+    probability: 0.7
+  - name: Solvability.ADCS_CertSpoof_Lateral
+    type: LOCAL
+    description: 'CVE-2022-34691 — ADCS cert spoof for DC→Z8 relay. CVSS 8.8. Use
+      owned DC''s ADCS cert to authenticate to CyberArkPAM via PKINIT chain.
+
+      '
+    cost: 1.5
+    success_rate: 0.88
+    reward: ADCS CertSpoof DC→Z8 relay (CVE-2022-34691) — CyberArkPAM Z8 auth established
+      via DC cert
+    match_properties:
+    - Windows
+    - DomainController
+    - ADCS
+    probability: 0.7
+services:
+  AWSWebServer:
+    port: HTTPS
+    value: 1000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Debian
+    - WebServer
+    - NginxServer
+    - AppServer
+    - breach_node
+    - Unpatched
+    is_goal: false
+  AWSAppServer:
+    port: HTTPS
+    value: 2500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Debian
+    - AppServer
+    - CloudInstance
+    - AWS
+    - Unpatched
+    - Misconfigured
+    is_goal: false
+  AWSWorkerNode:
+    port: HTTPS
+    value: 1500
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Debian
+    - WorkerNode
+    - AppServer
+    - CloudInstance
+    is_goal: false
+  AWSRedis:
+    port: HTTP
+    value: 1800
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - DatabaseServer
+    - HTTP
+    - Misconfigured
+    is_goal: false
+  AWSPostgreSQL:
+    port: PostgreSQL
+    value: 3000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - Alpine
+    - DatabaseServer
+    is_goal: false
+  AdminWorkstation:
+    port: RDP
+    value: 1500
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win10
+    - Workstation
+    - DomainJoined
+    - Misconfigured
+    - NoLAPS
+    - LocalAdmin
+    - DomainAdmin
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  ExchangeServer:
+    port: HTTPS
+    value: 3000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - MailServer
+    - DomainJoined
+    - PrintServer
+    - Kerberoastable
+    - Unpatched
+    is_goal: false
+  FileServer:
+    port: SMB
+    value: 2000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - FileServer
+    - DomainJoined
+    - Misconfigured
+    - SMB
+    - DatabaseServer
+    - Unpatched
+    is_goal: false
+  DomainController:
+    port: LDAP
+    value: 6000
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2022
+    - DomainController
+    - DomainJoined
+    - ADCS
+    - DomainAdmin
+    - DatabaseServer
+    - IdentityProvider
+    is_goal: false
+  CyberArkPAM:
+    port: HTTPS
+    value: 10000
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - AppServer
+    - IdentityProvider
+    - DomainAdmin
+    - DatabaseServer
+    is_goal: true
+  postfix:
+    port: SMTP
+    value: 800
+    allowed_os:
+    - Linux
+    default_properties:
+    - Linux
+    - MailServer
+    - Misconfigured
+    is_goal: false
+  wmi_svc:
+    port: WMI
+    value: 600
+    allowed_os:
+    - Windows
+    default_properties:
+    - Windows
+    - Win2019
+    - DomainJoined
+    - LocalAdmin
+    - Misconfigured
+    is_goal: false
+domains:
+- name: AWSCloud
+  subnet: 10.3.0.0/24
+  filler:
+  - AWSWorkerNode
+  mandatory_services:
+  - AWSWebServer
+  - AWSAppServer
+  - AWSWorkerNode
+  - AWSRedis
+  - AWSPostgreSQL
+  groups:
+  - name: AWSWebServers
+    service: AWSWebServer
+    min_count: 2
+    max_count: 10
+  - name: AWSAppServers
+    service: AWSAppServer
+    min_count: 2
+    max_count: 10
+  - name: AWSWorkerNodes
+    service: AWSWorkerNode
+    min_count: 2
+    max_count: 8
+  - name: AWSRedisNodes
+    service: AWSRedis
+    min_count: 1
+    max_count: 3
+  - name: AWSPostgreSQLNodes
+    service: AWSPostgreSQL
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: AWSWebServers
+    target: breach_node
+    relation: MUST_HAVE
+  - source: AWSRedisNodes
+    target: Misconfigured
+    relation: MUST_HAVE
+  - source: AWSAppServers
+    target: AWSWebServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AWSWorkerNodes
+    target: AWSAppServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AWSPostgreSQLNodes
+    target: AWSWorkerNodes
+    relation: MUST_CONNECT
+    protocol: PostgreSQL
+  - source: AWSAppServers
+    target: AWSRedisNodes
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: HTTP
+- name: HQVLANs
+  subnet: 10.1.0.0/24
+  filler:
+  - AdminWorkstation
+  mandatory_services:
+  - AdminWorkstation
+  groups:
+  - name: AdminWorkstations
+    service: AdminWorkstation
+    min_count: 3
+    max_count: 20
+  constraints:
+  - source: AdminWorkstations
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: AdminWorkstations
+    target: DomainJoined
+    relation: MUST_HAVE
+- name: ServerFarm
+  subnet: 10.1.10.0/24
+  filler:
+  - FileServer
+  mandatory_services:
+  - ExchangeServer
+  - FileServer
+  - DomainController
+  groups:
+  - name: ExchangeServers
+    service: ExchangeServer
+    min_count: 1
+    max_count: 5
+  - name: FileServers
+    service: FileServer
+    min_count: 2
+    max_count: 10
+  - name: DomainControllers
+    service: DomainController
+    min_count: 1
+    max_count: 3
+  - name: postfixs
+    service: postfix
+    min_count: 1
+    max_count: 3
+  - name: wmi_svcs
+    service: wmi_svc
+    min_count: 1
+    max_count: 3
+  constraints:
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: DomainControllers
+    target: IdentityProvider
+    relation: MUST_HAVE
+  - source: ExchangeServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: LDAP
+  - source: FileServers
+    target: DomainControllers
+    relation: MUST_CONNECT
+    protocol: SMB
+- name: KeyManagement
+  subnet: 192.168.100.0/24
+  filler:
+  - CyberArkPAM
+  mandatory_services:
+  - CyberArkPAM
+  groups:
+  - name: CyberArkPAMs
+    service: CyberArkPAM
+    min_count: 1
+    max_count: 2
+  constraints:
+  - source: CyberArkPAMs
+    target: DomainAdmin
+    relation: MUST_HAVE
+  - source: CyberArkPAMs
+    target: DatabaseServer
+    relation: MUST_HAVE
+inter_domain_constraints:
+- source_domain: AWSCloud
+  target_domain: HQVLANs
+  constraints:
+  - source: AWSPostgreSQLNodes
+    target: AdminWorkstations
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: HTTPS
+  - source: AWSAppServers
+    target: AdminWorkstations
+    relation: KNOWS
+- source_domain: AWSCloud
+  target_domain: ServerFarm
+  constraints:
+  - source: AWSPostgreSQLNodes
+    target: DomainControllers
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: LDAP
+- source_domain: HQVLANs
+  target_domain: ServerFarm
+  constraints:
+  - source: AdminWorkstations
+    target: ExchangeServers
+    relation: MUST_CONNECT
+    protocol: HTTPS
+  - source: AdminWorkstations
+    target: FileServers
+    relation: MUST_CONNECT
+    protocol: SMB
+  - source: AdminWorkstations
+    target: DomainControllers
+    relation: LEAK_KNOWN_CREDENTIALS
+    protocol: LDAP
+- source_domain: ServerFarm
+  target_domain: KeyManagement
+  constraints:
+  - source: DomainControllers
+    target: CyberArkPAMs
+    relation: MUST_CONNECT
+    protocol: HTTPS
+entry_points:
+- domain: AWSCloud
+  node: AWSWebServers
+solvability_rules:
+  entry_point_requirements:
+    min_remote_vulnerabilities: 1
+    min_credential_leaking_vulnerabilities: 1
+  lateral_movement_requirements:
+    min_credential_leaking_nodes: 0.5
+  auto_fix_enabled: true
+  auto_fix_strategies:
+  - add_remote_vulnerability_to_entry
+  - add_credential_leakage
+  - add_lateral_movement_vulnerabilities

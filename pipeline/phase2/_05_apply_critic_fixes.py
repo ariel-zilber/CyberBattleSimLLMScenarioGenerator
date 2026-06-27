@@ -356,6 +356,21 @@ FATAL MISTAKES to avoid:
 """
 
 
+def _coverage_gap_section(coverage_gap: "list[str] | None") -> str:
+    """Build a prompt section listing under-represented vulnerability slots."""
+    if not coverage_gap:
+        return ""
+    slots = "\n".join(f"  - {s}" for s in coverage_gap[:30])
+    tail = f"\n  ... and {len(coverage_gap) - 30} more" if len(coverage_gap) > 30 else ""
+    return (
+        "\n## COVERAGE GAP — MANDATORY INCLUSION\n"
+        "The following Solvability slots are under-represented across the full dataset.\n"
+        "You MUST include at least 2–3 of these in the repaired config's vulnerability list.\n"
+        "Do NOT remove existing slots to make room — add new node groups or attach to existing ones.\n"
+        f"{slots}{tail}\n"
+    )
+
+
 def _build_repair_prompt(
     original_yaml: str,
     findings_text: str,
@@ -365,6 +380,7 @@ def _build_repair_prompt(
     previous_failures: "list[str] | None" = None,
     runtime_rules: str = "",
     llm_quality_summary: str = "",
+    coverage_gap: "list[str] | None" = None,
 ) -> str:
     critic_section = textwrap.dedent(f"""
         ## LLM Critic Assessment
@@ -378,6 +394,7 @@ def _build_repair_prompt(
             failure_section += f"  - {msg}\n"
 
     llm_quality_section = f"\n## LLM Quality Evaluation Summary\n{llm_quality_summary}\n" if llm_quality_summary else ""
+    coverage_section = _coverage_gap_section(coverage_gap)
 
     return textwrap.dedent(f"""
         You are a CyberBattleSim domain configuration repair specialist.
@@ -413,6 +430,8 @@ def _build_repair_prompt(
         - attack_flow must have ≥4 hops; goal must NOT be in the first hop targets
 
         {_MULTI_DOMAIN_EXAMPLE}
+
+        {coverage_section}
 
         {failure_section}
 
@@ -451,6 +470,7 @@ def repair_config(
     inplace: bool = False,
     verbose: bool = True,
     phase2_out: "Path | None" = None,
+    coverage_gap: "list[str] | None" = None,
 ) -> "Path | None":
     """Repair a domain config YAML using LLM critique feedback + runtime BFS metrics.
 
@@ -557,6 +577,7 @@ def repair_config(
             previous_failures=previous_failures if previous_failures else None,
             runtime_rules=runtime_rules,
             llm_quality_summary=llm_quality_summary,
+            coverage_gap=coverage_gap,
         )
 
         if verbose:
@@ -763,6 +784,9 @@ def main():
     parser.add_argument("--phase2-out", type=Path, default=None, metavar="DIR",
                         help="Phase 2 output directory containing bfs_metrics.json and "
                              "quality_evaluation.json (enables runtime-aware repair)")
+    parser.add_argument("--coverage-gap", type=str, default=None, metavar="JSON",
+                        help="JSON array of Solvability.* slot names that are under-represented "
+                             "in the dataset — actor will be instructed to include them")
 
     args = parser.parse_args()
 
@@ -770,12 +794,20 @@ def main():
         print(f"ERROR: Config file not found: {args.config}")
         sys.exit(1)
 
+    coverage_gap: list[str] | None = None
+    if args.coverage_gap:
+        try:
+            coverage_gap = json.loads(args.coverage_gap)
+        except Exception as exc:
+            print(f"[WARN] Could not parse --coverage-gap JSON: {exc}")
+
     result = repair_config(
         config_path=args.config,
         max_attempts=args.max_attempts,
         inplace=args.inplace,
         verbose=not args.quiet,
         phase2_out=args.phase2_out,
+        coverage_gap=coverage_gap,
     )
     sys.exit(0 if result else 1)
 

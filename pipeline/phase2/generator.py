@@ -90,6 +90,11 @@ def _generate_one(
     if dry_run:
         return True
 
+    # On macOS, ProcessPoolExecutor uses spawn — workers start fresh without
+    # the parent's sys.path. Re-insert the repo root so local packages resolve.
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+
     try:
         from cli import generate_scenario
     except Exception as e:

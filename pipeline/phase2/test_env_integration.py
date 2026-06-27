@@ -703,6 +703,62 @@ def calculate_difficulty_score(run_metrics: dict) -> dict:
     }
 
 
+def _compute_slot_coverage_metrics(scenario_dir: Path) -> dict:
+    """Read node YAML files and compute vocabulary coverage metrics.
+
+    Returns slot_coverage (dict vuln→node_count), vuln_entropy, zero_coverage_count,
+    and top/bottom slot lists. No dependency on agent type or config.
+    """
+    import math
+    import yaml as _yaml
+
+    nodes_dir = scenario_dir / "nodes"
+    if not nodes_dir.is_dir():
+        return {}
+
+    vuln_node_counts: Counter = Counter()
+    total_nodes = 0
+
+    for node_file in nodes_dir.glob("*.yaml"):
+        try:
+            data = _yaml.safe_load(node_file.read_text())
+        except Exception:
+            continue
+        vulns = data.get("vulnerabilities", {})
+        if isinstance(vulns, dict):
+            for vuln_name in vulns:
+                if vuln_name.startswith("Solvability."):
+                    vuln_node_counts[vuln_name] += 1
+        total_nodes += 1
+
+    if not vuln_node_counts:
+        return {
+            "slot_coverage": {},
+            "unique_vuln_slots": 0,
+            "vuln_entropy": 0.0,
+            "zero_coverage_slots": 0,
+            "total_nodes_scanned": total_nodes,
+        }
+
+    # Shannon entropy of vuln distribution across slots
+    total_instances = sum(vuln_node_counts.values())
+    entropy = 0.0
+    for count in vuln_node_counts.values():
+        p = count / total_instances
+        entropy -= p * math.log2(p)
+
+    # Sort by node count descending for easy inspection
+    sorted_coverage = dict(sorted(vuln_node_counts.items(), key=lambda x: x[1], reverse=True))
+
+    return {
+        "slot_coverage":       sorted_coverage,           # vuln_name → node_count
+        "unique_vuln_slots":   len(vuln_node_counts),     # distinct Solvability.* names present
+        "vuln_entropy":        round(entropy, 4),          # higher = more uniform distribution
+        "zero_coverage_slots": 0,                          # 0 here; batch-level aggregation adds this
+        "total_nodes_scanned": total_nodes,
+    }
+
+
 def generate_llm_quality_prompt(scenario_dir: Path, is_solved: bool, best_stats: dict, episodes_run: int, final_step: int, num_agents: int, topo_info: dict, episode_reward: float, replay_info: dict = None) -> dict:
     """Generates the single-scenario LLM prompt AND returns a JSON dictionary for aggregation."""
 
@@ -778,7 +834,8 @@ def generate_llm_quality_prompt(scenario_dir: Path, is_solved: bool, best_stats:
         "action_stats":    action_stats,
         "action_outcomes": outcomes,
         "firewall_metrics": _compute_firewall_metrics(scenario_dir),
-        "replay_verification": replay_info or {}
+        "replay_verification": replay_info or {},
+        "slot_coverage": _compute_slot_coverage_metrics(scenario_dir),
     }
 
     # Compute difficulty score
