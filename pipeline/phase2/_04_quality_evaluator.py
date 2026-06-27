@@ -105,7 +105,7 @@ def _yaml_to_str(cfg: dict) -> str:
 
 
 def _read_env_key(key_name: str = "ANTHROPIC_API_KEY") -> str:
-    env_file = Path(__file__).resolve().parent.parent / ".env"
+    env_file = Path(__file__).resolve().parent.parent.parent / ".env"
     if not env_file.exists():
         return ""
     for line in env_file.read_text().splitlines():
@@ -163,32 +163,45 @@ def _call_gemini_cli(prompt: str) -> Optional[str]:
             os.remove(temp_prompt_path)
 
 
-def _call_llm_eval(prompt: str) -> Optional[str]:
-    """Call Claude (primary), Gemini API (secondary), or Gemini CLI (fallback) and return the response text."""
-    import os
-    
-    # 1. Try Claude
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "") or _read_env_key("ANTHROPIC_API_KEY")
-    if anthropic_key:
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=anthropic_key)
-            msg = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=2048,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return msg.content[0].text
-        except Exception as exc:
-            print(f"  [WARN] Claude evaluator failed: {exc}")
+def _call_claude_cli(prompt: str) -> Optional[str]:
+    """Call Claude Code CLI via `claude --print` piped input."""
+    import subprocess
+    try:
+        print("  [INFO] Calling Claude CLI as fallback critic...")
+        result = subprocess.run(
+            ["claude", "--print"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        print(f"  [WARN] Claude CLI failed (exit {result.returncode}): {result.stderr[:200]}")
+        return None
+    except Exception as exc:
+        print(f"  [WARN] Claude CLI call failed: {exc}")
+        return None
 
-    # 2. Try Gemini API fallback
+
+def _call_llm_eval(prompt: str) -> Optional[str]:
+    """Call Claude CLI (primary), Gemini API (secondary), or Gemini CLI (last resort)."""
+    import os
+
+    # 1. Claude CLI (primary)
+    result = _call_claude_cli(prompt)
+    if result is not None:
+        return result
+    print("  [INFO] Claude CLI failed, trying Gemini API fallback...")
+
+    # 2. Gemini API fallback
     google_key = os.environ.get("GOOGLE_API_KEY", "") or _read_env_key("GOOGLE_API_KEY")
     if google_key:
-        print("  [INFO] Using Gemini API as fallback critic...")
-        return _call_gemini(prompt, google_key)
+        result = _call_gemini(prompt, google_key)
+        if result is not None:
+            return result
 
-    # 3. Try Gemini CLI fallback
+    # 3. Gemini CLI last resort
     return _call_gemini_cli(prompt)
 
 

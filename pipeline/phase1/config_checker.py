@@ -570,21 +570,50 @@ _SUCCESS_RATE_FLOOR = 0.05  # below this is functionally dead gradient
 def check_specialist_vocab_coverage(cfg: dict) -> List[str]:
     """Every local/remote vuln and connect port in the agent spec must appear in the config.
 
+    For single-specialist configs, checks that agent's spec.
+    For Meta configs (agent: Meta / training_mode: specialist_meta), checks ALL 5
+    specialist specs — every slot across all specialists must be present so that
+    no action index receives zero gradient during training.
+
     Sub-0.05 success_rate is treated as absent — it produces insufficient gradient
     signal (~150 positive hits per 3000 attempts, below stable Q-value estimation).
     """
     issues: List[str] = []
-    agent = cfg.get("metadata", {}).get("agent", "")
-    if agent not in _AGENT_SPEC_NAMES:
-        return issues  # Meta or unknown — skip
+    meta = cfg.get("metadata", {})
+    agent = meta.get("agent", "")
+    training_mode = meta.get("training_mode", "")
 
-    local_spec, remote_spec, port_spec = _load_spec_vulns(agent)
-    if not local_spec and not remote_spec:
-        issues.append(
-            f"[vocab-coverage] Could not load agent spec for '{agent}' "
-            f"from {_AGENTS_DIR} — coverage check skipped"
-        )
-        return issues
+    is_meta = (agent == "Meta" or training_mode == "specialist_meta")
+
+    if is_meta:
+        # Collect union of all 5 specialist specs
+        all_local:  List[str] = []
+        all_remote: List[str] = []
+        all_ports:  List[str] = []
+        for spec_agent in _AGENT_SPEC_NAMES:
+            l, r, p = _load_spec_vulns(spec_agent)
+            all_local  += [v for v in l if v not in all_local]
+            all_remote += [v for v in r if v not in all_remote]
+            all_ports  += [v for v in p if v not in all_ports]
+        if not all_local and not all_remote:
+            issues.append(
+                "[vocab-coverage] Meta config: could not load any specialist specs "
+                f"from {_AGENTS_DIR} — coverage check skipped"
+            )
+            return issues
+        local_spec, remote_spec, port_spec = all_local, all_remote, all_ports
+        spec_label = "all-specialists"
+    elif agent in _AGENT_SPEC_NAMES:
+        local_spec, remote_spec, port_spec = _load_spec_vulns(agent)
+        if not local_spec and not remote_spec:
+            issues.append(
+                f"[vocab-coverage] Could not load agent spec for '{agent}' "
+                f"from {_AGENTS_DIR} — coverage check skipped"
+            )
+            return issues
+        spec_label = agent
+    else:
+        return issues  # unknown agent — skip
 
     # Collect all Solvability.* names with valid success_rate
     used: Set[str] = set()
@@ -618,12 +647,12 @@ def check_specialist_vocab_coverage(cfg: dict) -> List[str]:
 
     for v in missing_local:
         issues.append(
-            f"[vocab-coverage] Local action '{v}' is in the {agent} spec "
+            f"[vocab-coverage] Local action '{v}' is in the {spec_label} spec "
             f"but absent from this config — that action slot will be dead in training"
         )
     for v in missing_remote:
         issues.append(
-            f"[vocab-coverage] Remote action '{v}' is in the {agent} spec "
+            f"[vocab-coverage] Remote action '{v}' is in the {spec_label} spec "
             f"but absent from this config — that action slot will be dead in training"
         )
 
@@ -637,7 +666,7 @@ def check_specialist_vocab_coverage(cfg: dict) -> List[str]:
         missing_ports = [p for p in port_spec if p not in all_service_ports]
         for p in missing_ports:
             issues.append(
-                f"[vocab-coverage] Connect port '{p}' is in the {agent} spec "
+                f"[vocab-coverage] Connect port '{p}' is in the {spec_label} spec "
                 f"but no service in this config uses it — that connect slot will be dead in training"
             )
         if not missing_ports:
@@ -645,7 +674,7 @@ def check_specialist_vocab_coverage(cfg: dict) -> List[str]:
 
     if not missing_local and not missing_remote and not low_rate:
         total = len(local_spec) + len(remote_spec)
-        ok(f"vocab-coverage: all {total} specialist vuln slots covered at success_rate >= {_SUCCESS_RATE_FLOOR}")
+        ok(f"vocab-coverage: all {total} {spec_label} vuln slots covered at success_rate >= {_SUCCESS_RATE_FLOOR}")
 
     return issues
 

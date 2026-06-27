@@ -999,7 +999,7 @@ def _get_env_key(key_name: str) -> str:
     key = os.environ.get(key_name, "")
     if key:
         return key
-    env_file = Path(__file__).resolve().parent.parent / ".env"
+    env_file = Path(__file__).resolve().parent.parent.parent / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             line = line.strip()

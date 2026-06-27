@@ -320,7 +320,7 @@ solvability_vulnerabilities:
 
       '
     cost: 1.0
-    success_rate: 0.9
+    success_rate: 0.38
     reward: AWSWebServer Linux RCE — PATH B started via Z6 AWSWebServer (3-hop route
       to DC)
     match_properties:
