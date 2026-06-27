@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # Resume pipeline: skip completed templates (≥40 train + ≥10 test), run the rest.
 
-REPO="/Users/ariel.zilbershteyin/Documents/thesis/CyberBattleSimLLMScenarioGenerator"
-PYTHON="/Users/ariel.zilbershteyin/miniconda3/envs/cybersim/bin/python"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Auto-detect python in the cybersim conda env
+if conda run -n cybersim python --version &>/dev/null 2>&1; then
+  PYTHON="conda run -n cybersim python"
+elif [ -x "$HOME/miniconda3/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/miniconda3/envs/cybersim/bin/python"
+elif [ -x "$HOME/anaconda3/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/anaconda3/envs/cybersim/bin/python"
+elif [ -x "$HOME/mambaforge/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/mambaforge/envs/cybersim/bin/python"
+else
+  PYTHON="python3"
+fi
 OUTDIR="$REPO/output_specialist_meta_pipeline"
 LOG_DIR="$OUTDIR/logs"
 PARALLEL=4

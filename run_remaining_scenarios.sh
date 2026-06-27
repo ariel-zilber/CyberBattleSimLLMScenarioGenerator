@@ -2,8 +2,19 @@
 # Run the 13 remaining specialist scenarios (0 train scenarios) through the full pipeline.
 # Runs up to 4 in parallel. Logs to output_specialist_meta_pipeline/logs/
 
-REPO="/Users/ariel.zilbershteyin/Documents/thesis/CyberBattleSimLLMScenarioGenerator"
-PYTHON="/Users/ariel.zilbershteyin/miniconda3/envs/cybersim/bin/python"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Auto-detect python in the cybersim conda env
+if conda run -n cybersim python --version &>/dev/null 2>&1; then
+  PYTHON="conda run -n cybersim python"
+elif [ -x "$HOME/miniconda3/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/miniconda3/envs/cybersim/bin/python"
+elif [ -x "$HOME/anaconda3/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/anaconda3/envs/cybersim/bin/python"
+elif [ -x "$HOME/mambaforge/envs/cybersim/bin/python" ]; then
+  PYTHON="$HOME/mambaforge/envs/cybersim/bin/python"
+else
+  PYTHON="python3"
+fi
 LOG_DIR="$REPO/output_specialist_meta_pipeline/logs"
 MASTER_LOG="$LOG_DIR/_master_remaining.log"
 PARALLEL=4

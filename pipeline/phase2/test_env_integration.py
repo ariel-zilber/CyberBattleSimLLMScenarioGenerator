@@ -679,9 +679,15 @@ def calculate_difficulty_score(run_metrics: dict) -> dict:
     # If a planner takes many steps per node, it implies high cursor navigation or retry overhead
     efficiency_score = min(2.5, (steps / nodes) / 5.0)
     
-    # 4. Stochastic Volatility (0.0 - 2.5): Replay failure rate
-    replay_sr = run_metrics.get("replay_verification", {}).get("success_rate", 1.0)
-    volatility_score = (1.0 - replay_sr) * 2.5
+    # 4. Stochastic Volatility (0.0 - 2.5): Failed-action ratio
+    # replay_verification is not always run, so derive volatility from the
+    # action_outcomes dict that is always populated.  ExploitFailed is the only
+    # failure outcome type; everything else (ProbeSucceeded, LateralMove, …) is
+    # a success.  A high failure ratio → high volatility → harder scenario.
+    action_outcomes = run_metrics.get("action_outcomes", {})
+    failed_actions  = action_outcomes.get("ExploitFailed", 0)
+    total_actions   = sum(action_outcomes.values())
+    volatility_score = min(2.5, (failed_actions / max(total_actions, 1)) * 2.5)
     
     total_score = round(stochastic_score + structural_score + efficiency_score + volatility_score, 2)
     
@@ -783,16 +789,51 @@ def generate_llm_quality_prompt(scenario_dir: Path, is_solved: bool, best_stats:
     steps_to_first_goal   = best_stats.get('steps_to_first_goal') or 0
     steps_to_final_goal   = best_stats.get('steps_to_final_goal') or 0
 
-    # ── Action success rates (from callbacks.py parity) ─────────────────────
+    # ── Action success rates derived from outcome_counts ─────────────────────
+    # best_stats never carries pre-computed *_success_rate keys — they must be
+    # derived from outcome_counts, which the env populates on every step().
+    #
+    # Success outcomes: any outcome that advances the attack state.
+    # Failure outcomes: ExploitFailed, ProbeFailed, NullOutcome.
+    # Movement is cursor navigation, not an attack action — excluded from rates.
+    _SUCCESS_OUTCOMES = {
+        'LateralMove', 'LeakedCredentials', 'LeakedNodesId',
+        'PrivilegeEscalation', 'AdminEscalation', 'SystemEscalation',
+        'UserEscalation', 'ProbeSucceeded', 'CustomerData',
+    }
+    _FAILURE_OUTCOMES = {'ExploitFailed', 'ProbeFailed', 'NullOutcome'}
+    # Local vulns tend to yield PrivilegeEscalation / CustomerData;
+    # remote vulns yield LateralMove / LeakedNodesId / LeakedCredentials.
+    # Port-connect actions produce LateralMove / LeakedCredentials.
+    # Since outcome_counts does not tag action type, we attribute by outcome class:
+    _LOCAL_SUCCESS  = {'PrivilegeEscalation', 'AdminEscalation', 'SystemEscalation', 'UserEscalation', 'CustomerData'}
+    _REMOTE_SUCCESS = {'LateralMove', 'LeakedNodesId', 'LeakedCredentials', 'ProbeSucceeded'}
+    _PORT_SUCCESS   = {'LateralMove', 'LeakedCredentials'}
+
+    _total_success = sum(outcomes.get(k, 0) for k in _SUCCESS_OUTCOMES)
+    _total_failure = sum(outcomes.get(k, 0) for k in _FAILURE_OUTCOMES)
+    _total_attacks = _total_success + _total_failure  # excludes Movement (navigation)
+
+    _local_success  = sum(outcomes.get(k, 0) for k in _LOCAL_SUCCESS)
+    _remote_success = sum(outcomes.get(k, 0) for k in _REMOTE_SUCCESS)
+    _port_success   = sum(outcomes.get(k, 0) for k in _PORT_SUCCESS)
+
+    # Approximate per-type attempt counts: no separate per-type attempt counters
+    # exist, so use _total_attacks as the shared denominator for success rates.
+    _safe_div = lambda num, den: num / den if den > 0 else 0.0
+
+    _total_steps = max(final_step, 1)
+    _movements   = outcomes.get('Movement', 0)
+
     action_stats = {
-        "local_attacks_success_rate":   round(best_stats.get('local_attacks_success_rate', 0.0), 4),
-        "remote_attacks_success_rate":  round(best_stats.get('remote_attacks_success_rate', 0.0), 4),
-        "port_connections_success_rate": round(best_stats.get('port_connections_success_rate', 0.0), 4),
-        "overall_actions_success_rate": round(best_stats.get('overall_actions_success_rate', 0.0), 4),
-        "local_attacks_rate":           round(best_stats.get('local_attacks_rate', 0.0), 4),
-        "remote_attacks_rate":          round(best_stats.get('remote_attacks_rate', 0.0), 4),
-        "port_connections_rate":        round(best_stats.get('port_connections_rate', 0.0), 4),
-        "movements_rate":               round(best_stats.get('movements_rate', 0.0), 4),
+        "local_attacks_success_rate":    round(_safe_div(_local_success,  _total_attacks), 4),
+        "remote_attacks_success_rate":   round(_safe_div(_remote_success, _total_attacks), 4),
+        "port_connections_success_rate": round(_safe_div(_port_success,   _total_attacks), 4),
+        "overall_actions_success_rate":  round(_safe_div(_total_success,  _total_attacks), 4),
+        "local_attacks_rate":            round(_safe_div(_local_success,  _total_steps), 4),
+        "remote_attacks_rate":           round(_safe_div(_remote_success, _total_steps), 4),
+        "port_connections_rate":         round(_safe_div(_port_success,   _total_steps), 4),
+        "movements_rate":                round(_safe_div(_movements,      _total_steps), 4),
     }
 
     # ── Network structure: tree-likeness ratio ────────────────────────────

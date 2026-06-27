@@ -1539,7 +1539,7 @@ class PipelineRunner:
         gap_json = self.metrics_out / "coverage_gap.json"
         result = subprocess.run(
             [_python(), str(audit_script),
-             "--scenarios-dir", str(REPO_ROOT / "data" / "scenarios"),
+             "--scenarios-dir", str(self.scenarios_out),
              "--gap-json", str(gap_json)],
             capture_output=True, text=True, cwd=str(REPO_ROOT),
         )
@@ -1552,9 +1552,9 @@ class PipelineRunner:
             self._mark_step("9", "completed", "coverage OK")
             self.tracker.log_step_status("9", "completed")
         elif result.returncode == 1:
-            self._warn("Coverage below threshold — see coverage_gap.json for missing slots")
-            self._mark_step("9", "warned", "coverage below threshold")
-            self.tracker.log_step_status("9", "warned")
+            self._fail("Coverage below threshold — see coverage_gap.json for missing slots; regenerate with more diverse vulns")
+            self._mark_step("9", "failed", "coverage below threshold")
+            self.tracker.log_step_status("9", "failed")
         else:
             self._warn(f"Coverage audit script error (exit {result.returncode})")
             self._mark_step("9", "warned", f"audit script exit={result.returncode}")
