@@ -246,6 +246,28 @@ def _call_gemini(prompt: str, api_key: str) -> Optional[str]:
         return None
 
 
+def _call_claude_cli(prompt: str) -> Optional[str]:
+    """Call Claude Code CLI via `claude --print` piped input."""
+    import subprocess
+    try:
+        print("  [INFO] Calling Claude CLI for repair...")
+        result = subprocess.run(
+            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        err = (result.stderr or result.stdout or "").strip()
+        print(f"  [WARN] Claude CLI failed (exit {result.returncode}): {err[:300]}")
+        return None
+    except Exception as exc:
+        print(f"  [WARN] Claude CLI call failed: {exc}")
+        return None
+
+
 def _call_gemini_cli(prompt: str) -> Optional[str]:
     """Call the gemini CLI as an ultimate fallback."""
     import subprocess
@@ -582,26 +604,46 @@ def repair_config(
 
         if verbose:
             print(f"\n── Attempt {attempt}/{max_attempts} ──")
-            print(f"  Sending {len(prompt)} chars to Claude...")
+            print(f"  Sending {len(prompt)} chars to LLM...")
 
-        try:
-            response = client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=8192,
-                system=(
-                    "You are a CyberBattleSim YAML config repair specialist. "
-                    "You output ONLY valid YAML inside a single ```yaml block. "
-                    "No prose, no explanation outside the block."
-                ),
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw_response = response.content[0].text if response.content else ""
-            usage = {
-                "input_tokens":  response.usage.input_tokens,
-                "output_tokens": response.usage.output_tokens,
-            }
-        except Exception as exc:
-            print(f"  [ERROR] API call failed: {exc}")
+        raw_response = None
+        usage = {"input_tokens": 0, "output_tokens": 0}
+
+        # 1. Anthropic SDK (primary)
+        if client is not None:
+            try:
+                response = client.messages.create(
+                    model="claude-sonnet-4-6",
+                    max_tokens=8192,
+                    system=(
+                        "You are a CyberBattleSim YAML config repair specialist. "
+                        "You output ONLY valid YAML inside a single ```yaml block. "
+                        "No prose, no explanation outside the block."
+                    ),
+                    messages=[{"role": "user", "content": prompt}],
+                )
+                raw_response = response.content[0].text if response.content else ""
+                usage = {
+                    "input_tokens":  response.usage.input_tokens,
+                    "output_tokens": response.usage.output_tokens,
+                }
+            except Exception as exc:
+                print(f"  [WARN] Anthropic API call failed: {exc}")
+
+        # 2. Claude CLI fallback
+        if not raw_response:
+            raw_response = _call_claude_cli(prompt)
+
+        # 3. Gemini API fallback
+        if not raw_response and google_key:
+            raw_response = _call_gemini(prompt, google_key)
+
+        # 4. Gemini CLI last resort
+        if not raw_response:
+            raw_response = _call_gemini_cli(prompt)
+
+        if not raw_response:
+            print("  [ERROR] All LLM backends failed")
             break
 
         if verbose:

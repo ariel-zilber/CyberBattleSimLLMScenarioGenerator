@@ -1049,14 +1049,32 @@ def _get_env_key(key_name: str) -> str:
     return ""
 
 
+def _call_claude_cli_critic(prompt: str) -> str | None:
+    """Call Claude Code CLI via `claude --print` before API fallbacks."""
+    import subprocess
+
+    try:
+        print("\n  Calling Claude CLI critic...")
+        result = subprocess.run(
+            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=360,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+        err = (result.stderr or result.stdout or "").strip()
+        print(f"  [WARN] Claude CLI critic failed (exit {result.returncode}): {err[:300]}")
+    except Exception as exc:
+        print(f"  [WARN] Claude CLI critic call failed: {exc}")
+    return None
+
+
 def _call_llm_critic(prompt: str, output_dir: Path) -> None:
-    """Send the dataset evaluation prompt to Claude (primary) or Gemini (fallback)."""
+    """Send the dataset evaluation prompt to Claude first, Gemini only as fallback."""
     anthropic_key = _get_env_key("ANTHROPIC_API_KEY")
     google_key    = _get_env_key("GOOGLE_API_KEY")
-    
-    if not anthropic_key and not google_key:
-        print("  [WARN] Neither ANTHROPIC_API_KEY nor GOOGLE_API_KEY set — LLM critic step skipped")
-        return
 
     system_msg = (
         "You are an expert AI Red Teamer and Cyber Range Architect evaluating "
@@ -1067,12 +1085,18 @@ def _call_llm_critic(prompt: str, output_dir: Path) -> None:
     
     critic_text = None
     model_name  = "unknown"
+    usage = {"input_tokens": 0, "output_tokens": 0}
 
-    # 1. Try Claude
-    if anthropic_key:
+    # 1. Try Claude CLI by default. This works even when API keys are not set.
+    critic_text = _call_claude_cli_critic(prompt)
+    if critic_text:
+        model_name = "claude-cli"
+
+    # 2. Try Anthropic API fallback.
+    if not critic_text and anthropic_key:
         try:
             import anthropic
-            print("\n  Calling Claude LLM critic...")
+            print("\n  Calling Claude API critic...")
             client   = anthropic.Anthropic(api_key=anthropic_key)
             response = client.messages.create(
                 model="claude-3-5-sonnet-20241022",
@@ -1089,7 +1113,7 @@ def _call_llm_critic(prompt: str, output_dir: Path) -> None:
         except Exception as exc:
             print(f"  [WARN] Claude critic API call failed: {exc}")
 
-    # 2. Try Gemini fallback
+    # 3. Try Gemini API fallback.
     if not critic_text and google_key:
         try:
             import google.generativeai as genai
@@ -1107,7 +1131,7 @@ def _call_llm_critic(prompt: str, output_dir: Path) -> None:
             print(f"  [WARN] Gemini critic API call failed: {exc}")
 
     if not critic_text:
-        print("  [WARN] Both Claude and Gemini critic attempts failed.")
+        print("  [WARN] Claude and Gemini critic attempts failed.")
         return
 
     result = {
@@ -1122,7 +1146,7 @@ def _call_llm_critic(prompt: str, output_dir: Path) -> None:
         json.dump(result, fh, indent=2, ensure_ascii=False)
 
     print(f"  ✓ LLM critic response saved: {out_file}")
-    if anthropic_key and model_name.startswith("claude"):
+    if anthropic_key and model_name.startswith("claude-3"):
         print(f"    Tokens used: {usage['input_tokens']} in / {usage['output_tokens']} out")
     
     # Print a short preview
@@ -1611,5 +1635,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     main()

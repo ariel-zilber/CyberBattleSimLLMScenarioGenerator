@@ -167,17 +167,18 @@ def _call_claude_cli(prompt: str) -> Optional[str]:
     """Call Claude Code CLI via `claude --print` piped input."""
     import subprocess
     try:
-        print("  [INFO] Calling Claude CLI as fallback critic...")
+        print("  [INFO] Calling Claude CLI critic...")
         result = subprocess.run(
-            ["claude", "--print"],
+            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet"],
             input=prompt,
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=360,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-        print(f"  [WARN] Claude CLI failed (exit {result.returncode}): {result.stderr[:200]}")
+        err = (result.stderr or result.stdout or "").strip()
+        print(f"  [WARN] Claude CLI failed (exit {result.returncode}): {err[:300]}")
         return None
     except Exception as exc:
         print(f"  [WARN] Claude CLI call failed: {exc}")
@@ -667,27 +668,6 @@ def _parse_llm_scores(llm_response: str, config_name: str) -> dict:
     }
 
 
-def _fallback_result(config_name: str, cfg: Optional[dict] = None) -> dict:
-    """Neutral result returned when LLM is unavailable."""
-    dimensions = {
-        k: {"name": v, "score": 5, "max_score": 10, "grade": "D", "findings": [
-            _finding("warning", "LLM evaluator unavailable — score defaulted to 5/10"),
-        ]}
-        for k, v in DIMENSION_NAMES.items()
-    }
-    # D-P3: still compute static template_alignment even without LLM
-    dimensions["template_alignment"] = _compute_template_alignment_score(cfg or {})
-    all_scores = [d["score"] for d in dimensions.values()]
-    overall = round(sum(all_scores) / len(all_scores), 1)
-    return {
-        "config_name":   config_name,
-        "overall_score": overall,
-        "overall_grade": _grade(overall),
-        "dimensions":    dimensions,
-        "top_issues":    [],
-        "summary":       "LLM evaluation unavailable. Check ANTHROPIC_API_KEY.",
-    }
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Evaluator class
@@ -729,7 +709,11 @@ class ScenarioQualityEvaluator:
             (_sd / f"llm_response_r{round_num}.txt").write_text(llm_response, encoding="utf-8")
 
         if not llm_response:
-            return _fallback_result(self.name, cfg=self.cfg)
+            raise RuntimeError(
+                f"LLM critic evaluation failed for '{self.name}': all backends "
+                "(Claude CLI, Gemini API, Gemini CLI) returned no response. "
+                "Ensure ANTHROPIC_API_KEY is set or Claude CLI is reachable."
+            )
 
         result = _parse_llm_scores(llm_response, self.name)
 
