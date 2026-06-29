@@ -1056,7 +1056,7 @@ def _call_claude_cli_critic(prompt: str) -> str | None:
     try:
         print("\n  Calling Claude CLI critic...")
         result = subprocess.run(
-            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet"],
+            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"],
             input=prompt,
             capture_output=True,
             text=True,

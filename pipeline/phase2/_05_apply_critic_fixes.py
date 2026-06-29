@@ -252,7 +252,7 @@ def _call_claude_cli(prompt: str) -> Optional[str]:
     try:
         print("  [INFO] Calling Claude CLI for repair...")
         result = subprocess.run(
-            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet"],
+            ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"],
             input=prompt,
             capture_output=True,
             text=True,
