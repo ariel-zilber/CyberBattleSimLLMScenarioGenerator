@@ -23,6 +23,7 @@ from cyberbattle.simulation.vulenrabilites import (
 )
 from cyberbattle.simulation.rate import Rates
 from pipeline import constants as C
+from pipeline.cbsim.components.precondition_utils import precondition_from_properties
 
 
 def _collect_planned_vuln_names(config: dict) -> set:
@@ -785,6 +786,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -824,6 +826,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_cached),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -859,6 +862,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=discovered),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -890,6 +894,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=outcome,
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -944,6 +949,7 @@ class SolvabilityPostProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=all_creds),
+            precondition=precondition_from_properties(match_props),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])

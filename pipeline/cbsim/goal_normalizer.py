@@ -55,6 +55,7 @@ from cyberbattle.simulation.vulenrabilites import (
     LeakedNodesId, PrivilegeEscalation, PrivilegeLevel, CachedCredential
 )
 from cyberbattle.simulation.rate import Rates
+from pipeline.cbsim.components.precondition_utils import precondition_from_properties
 
 
 class GoalNormalizer:
@@ -564,6 +565,7 @@ class GoalNormalizer:
                     description=tmpl['description'],
                     type=VulnerabilityType.LOCAL,
                     outcome=LeakedCredentials(credentials=goal_creds),
+                    precondition=precondition_from_properties(tmpl.get('match_properties', [])),
                     reward_string=tmpl['reward'],
                     cost=tmpl['cost'],
                     rates=Rates(successRate=tmpl['success_rate'])
@@ -605,6 +607,7 @@ class GoalNormalizer:
                     description=tmpl['description'],
                     type=VulnerabilityType.LOCAL,
                     outcome=outcome,
+                    precondition=precondition_from_properties(tmpl.get('match_properties', [])),
                     reward_string=tmpl['reward'],
                     cost=tmpl['cost'],
                     rates=Rates(successRate=tmpl['success_rate'])
@@ -624,6 +627,7 @@ class GoalNormalizer:
                         description=tmpl['description'],
                         type=VulnerabilityType.LOCAL,
                         outcome=LeakedCredentials(credentials=all_creds),
+                        precondition=precondition_from_properties(tmpl.get('match_properties', [])),
                         reward_string=tmpl['reward'],
                         cost=tmpl['cost'],
                         rates=Rates(successRate=tmpl['success_rate'])

@@ -17,6 +17,7 @@ from cyberbattle.simulation.vulenrabilites import (
 )
 from cyberbattle.simulation.rate import Rates
 from pipeline import constants as C
+from pipeline.cbsim.components.precondition_utils import precondition_from_properties
 
 
 class SolvabilityConstraintProcessor:
@@ -395,6 +396,7 @@ class SolvabilityConstraintProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.LOCAL,
             outcome=LeakedCredentials(credentials=cached_creds),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -423,6 +425,7 @@ class SolvabilityConstraintProcessor:
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
             outcome=LeakedCredentials(credentials=real_creds),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])

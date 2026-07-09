@@ -15,6 +15,7 @@ from cyberbattle.simulation.vulenrabilites import (
 )
 from cyberbattle.simulation.rate import Rates
 from .network_utils import NetworkUtils
+from .precondition_utils import precondition_from_properties
 
 
 class NodeBuilder:
@@ -398,6 +399,7 @@ class NodeBuilder:
                     description=probe.get('description', ''),
                     type=VulnerabilityType.REMOTE,
                     outcome=ProbeSucceeded(discovered_properties=discovered),
+                    precondition=precondition_from_properties([os_family]),
                     reward_string=probe.get('reward', f"Probed {os_family}"),
                     cost=probe.get('cost', 1.0),
                     rates=Rates(successRate=probe.get('success_rate', 1.0))

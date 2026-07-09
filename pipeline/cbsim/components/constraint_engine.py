@@ -30,6 +30,7 @@ from cyberbattle.simulation.vulenrabilites import (
     VulnerabilityType, LeakedNodesId
 )
 from cyberbattle.simulation.rate import Rates
+from pipeline.cbsim.components.precondition_utils import precondition_from_properties
 
 
 class ConstraintEngine:
@@ -272,6 +273,7 @@ class ConstraintEngine:
                             CachedCredential(node=target_id, port=target_port, credential=c)
                             for c in creds_to_leak
                         ]),
+                        precondition=precondition_from_properties(tmpl.get('match_properties', [])),
                         reward_string=reward,
                         cost=cost,
                         rates=Rates(successRate=success_rate)
@@ -331,6 +333,7 @@ class ConstraintEngine:
                         description=description,
                         type=VulnerabilityType.LOCAL,
                         outcome=LeakedNodesId(nodes=[target_id]),
+                        precondition=precondition_from_properties(tmpl.get('match_properties', [])),
                         reward_string=reward,
                         cost=cost,
                         rates=Rates(successRate=success_rate)
