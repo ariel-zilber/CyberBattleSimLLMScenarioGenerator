@@ -86,7 +86,8 @@ class NodeBuilder:
             services.append(ListeningService(name=service_name, allowedCredentials=[app_cred]))
 
         properties = list(service_profile.default_properties)
-        properties.append(os_family)
+        if os_family not in properties:
+            properties.append(os_family)
 
         ip_address = NetworkUtils.generate_ip(subnet, global_counter)
         vulnerabilities = self._generate_base_vulnerabilities(node_name, os_family, service_name, mgmt_port)
@@ -125,7 +126,8 @@ class NodeBuilder:
             services.append(ListeningService(name=service_name, allowedCredentials=[app_cred]))
 
         properties = list(service_profile.default_properties)
-        properties.append(os_family)
+        if os_family not in properties:
+            properties.append(os_family)
 
         ip_address = NetworkUtils.generate_ip(subnet, global_counter)
         firewall = self._create_default_firewall(subnet, domain_name, gateway_ip, os_family=os_family)
