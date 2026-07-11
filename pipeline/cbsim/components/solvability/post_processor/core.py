@@ -37,6 +37,7 @@ from pipeline.cbsim.components.solvability.post_processor.credential_chain impor
 from pipeline.cbsim.components.solvability.post_processor.discovery import ensure_discovery
 from pipeline.cbsim.components.solvability.post_processor.goal_access import ensure_goal_access
 from pipeline.cbsim.components.solvability.post_processor.goal_reachable import ensure_goal_reachable
+from pipeline.cbsim.components.solvability.post_processor.coverage_sweep import ensure_full_coverage
 
 # Re-exported so `from ...solvability_post_processor import _collect_planned_vuln_names`
 # (used by SolvabilityConstraintProcessor) keeps working unchanged.
@@ -215,6 +216,9 @@ class SolvabilityPostProcessor:
             self.cred_leak_templates, self.attack_flow, self._reachable_cache,
             self._should_place, self._check_planned, self._get_vulnerability_cost,
             self.fixes_applied,
+        )
+        ensure_full_coverage(
+            self.nodes, self.config, self._get_vulnerability_cost, self.fixes_applied,
         )
 
         stats = self._compute_stats()
