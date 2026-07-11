@@ -1,0 +1,7 @@
+STATUS: Task 2/5 of the solvability-file refactor. Solvability check
+(5 seeds, same ones used in the main-vs-wip-branch comparison earlier) was
+still running in the background when this commit was made - see the
+next commit/note for the confirmed result. If it comes back below 5/5,
+this commit needs investigation before task #3 (SolvabilityConstraintProcessor
+split) proceeds, since that split follows the exact same pattern and would
+carry forward the same defect if there is one.
