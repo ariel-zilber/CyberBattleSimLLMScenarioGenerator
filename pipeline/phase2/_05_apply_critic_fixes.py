@@ -32,6 +32,7 @@ import os
 import sys
 import textwrap
 from pathlib import Path
+from typing import Optional
 
 import yaml
 
@@ -45,7 +46,6 @@ sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(_PIPELINE_DIR))         # for constants.py
 from quality_evaluator import ScenarioQualityEvaluator  # noqa: E402
 from constants import (  # noqa: E402
-    FLAT_TOPOLOGY_DIAMETER,
     MAX_DENSITY_TARGET,
     MAX_REPAIR_ATTEMPTS,
     MIN_DIAMETER_TARGET,
@@ -244,6 +244,49 @@ def _call_gemini(prompt: str, api_key: str) -> Optional[str]:
     except Exception as exc:
         print(f"  [WARN] Gemini repair failed: {exc}")
         return None
+
+
+def _call_codex_cli(prompt: str) -> Optional[str]:
+    """Call the codex CLI non-interactively and return ONLY its final message.
+
+    codex exec streams event noise to stdout; -o writes just the final agent
+    message to a file, which we read back. read-only sandbox +
+    --skip-git-repo-check keep it side-effect-free. A usage-limit/auth error
+    leaves the output file empty, treated as failure so the caller falls back.
+    """
+    import subprocess
+    import tempfile
+    import os
+    out_path = None
+    try:
+        print("  [INFO] Calling codex CLI for repair...")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            out_path = f.name
+        result = subprocess.run(
+            ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+             "-o", out_path, "-"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=360,
+        )
+        text = ""
+        if os.path.exists(out_path):
+            text = open(out_path).read().strip()
+        if result.returncode == 0 and text:
+            return text
+        err = (result.stderr or result.stdout or "").strip()
+        print(f"  [WARN] codex CLI failed (exit {result.returncode}): {err[:300]}")
+        return None
+    except Exception as exc:
+        print(f"  [WARN] codex CLI call failed: {exc}")
+        return None
+    finally:
+        try:
+            if out_path and os.path.exists(out_path):
+                os.unlink(out_path)
+        except Exception:
+            pass
 
 
 def _call_claude_cli(prompt: str) -> Optional[str]:
@@ -609,8 +652,14 @@ def repair_config(
         raw_response = None
         usage = {"input_tokens": 0, "output_tokens": 0}
 
+        # 0. codex CLI (default primary). Set CBS_LLM_PRIMARY=claude to skip
+        #    codex and use the Anthropic SDK / Claude CLI path first instead.
+        llm_primary = os.environ.get("CBS_LLM_PRIMARY", "codex").strip().lower()
+        if llm_primary == "codex":
+            raw_response = _call_codex_cli(prompt)
+
         # 1. Anthropic SDK (primary)
-        if client is not None:
+        if not raw_response and client is not None:
             try:
                 response = client.messages.create(
                     model="claude-sonnet-4-6",

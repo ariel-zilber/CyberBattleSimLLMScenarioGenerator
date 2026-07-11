@@ -30,6 +30,10 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import yaml
+import subprocess
+import tempfile
+import os
+import argparse
 
 # ── kept for _extract_cve_metrics (used by graph generation) ─────────────────
 CVE_ID_RE = re.compile(r'CVE-\d{4}-\d{4,}', re.IGNORECASE)
@@ -130,10 +134,7 @@ def _call_gemini(prompt: str, api_key: str) -> Optional[str]:
 
 def _call_gemini_cli(prompt: str) -> Optional[str]:
     """Call the gemini CLI as an ultimate fallback."""
-    import subprocess
-    import tempfile
-    import os
-    
+
     # We use a temp file for the prompt to avoid shell escaping issues with large prompts
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         f.write(prompt)
@@ -144,16 +145,16 @@ def _call_gemini_cli(prompt: str) -> Optional[str]:
         # We tell gemini to be non-interactive and use the prompt file
         # The '-p' flag can take the prompt string, but for safety we might pipe it
         # Actually, let's try piped input if gemini supports it, or just use the file
-        result = subprocess.run(
+        result_call = subprocess.run(
             ["gemini", "-p", f"Please act as a critic for this CyberBattleSim scenario. Use the context and prompt provided below to generate a JSON response as specified.\n\nSOURCE PROMPT:\n{prompt}"],
             capture_output=True,
             text=True,
             timeout=180 # 3 minute timeout for CLI
         )
-        if result.returncode == 0:
-            return result.stdout
+        if result_call.returncode == 0:
+            return result_call.stdout
         else:
-            print(f"  [WARN] Gemini CLI failed with exit code {result.returncode}: {result.stderr}")
+            print(f"  [WARN] Gemini CLI failed with exit code {result_call.returncode}: {result_call.stderr}")
             return None
     except Exception as exc:
         print(f"  [WARN] Gemini CLI call failed: {exc}")
@@ -163,22 +164,63 @@ def _call_gemini_cli(prompt: str) -> Optional[str]:
             os.remove(temp_prompt_path)
 
 
+def _call_codex_cli(prompt: str) -> Optional[str]:
+    """Call the codex CLI non-interactively and return ONLY its final message.
+
+    codex exec streams event noise to stdout; -o/--output-last-message writes
+    just the final agent message to a file, which we read back. read-only
+    sandbox + --skip-git-repo-check keep it side-effect-free for a critic call.
+    A usage-limit / auth error leaves the output file empty, so an empty read
+    is treated as failure and the caller falls back to the next backend.
+    """
+    import tempfile
+    out_path = None
+    try:
+        print("  [INFO] Calling codex CLI critic...")
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+            out_path = f.name
+        result_run = subprocess.run(
+            ["codex", "exec", "--skip-git-repo-check", "--sandbox", "read-only",
+             "-o", out_path, "-"],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=360,
+        )
+        text = ""
+        if os.path.exists(out_path):
+            text = open(out_path).read().strip()
+        if result_run.returncode == 0 and text:
+            return text
+        err = (result_run.stderr or result_run.stdout or "").strip()
+        print(f"  [WARN] codex CLI failed (exit {result_run.returncode}): {err[:300]}")
+        return None
+    except Exception as exc:
+        print(f"  [WARN] codex CLI call failed: {exc}")
+        return None
+    finally:
+        try:
+            if out_path and os.path.exists(out_path):
+                os.unlink(out_path)
+        except Exception:
+            pass
+
+
 def _call_claude_cli(prompt: str) -> Optional[str]:
     """Call Claude Code CLI via `claude --print` piped input."""
-    import subprocess
     try:
         print("  [INFO] Calling Claude CLI critic...")
-        result = subprocess.run(
+        result_run = subprocess.run(
             ["claude", "--print", "--no-session-persistence", "--disable-slash-commands", "--model", "sonnet", "--mcp-config", '{"mcpServers":{}}', "--strict-mcp-config"],
             input=prompt,
             capture_output=True,
             text=True,
             timeout=360,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-        err = (result.stderr or result.stdout or "").strip()
-        print(f"  [WARN] Claude CLI failed (exit {result.returncode}): {err[:300]}")
+        if result_run.returncode == 0 and result_run.stdout.strip():
+            return result_run.stdout.strip()
+        err = (result_run.stderr or result_run.stdout or "").strip()
+        print(f"  [WARN] Claude CLI failed (exit {result_run.returncode}): {err[:300]}")
         return None
     except Exception as exc:
         print(f"  [WARN] Claude CLI call failed: {exc}")
@@ -186,23 +228,33 @@ def _call_claude_cli(prompt: str) -> Optional[str]:
 
 
 def _call_llm_eval(prompt: str) -> Optional[str]:
-    """Call Claude CLI (primary), Gemini API (secondary), or Gemini CLI (last resort)."""
-    import os
+    """Call the configured LLM backends in priority order.
 
-    # 1. Claude CLI (primary)
-    result = _call_claude_cli(prompt)
-    if result is not None:
-        return result
-    print("  [INFO] Claude CLI failed, trying Gemini API fallback...")
+    Default order is codex CLI (primary) → Claude CLI → Gemini API → Gemini CLI.
+    Set CBS_LLM_PRIMARY=claude to put Claude CLI first instead (codex still
+    available as a fallback). This lets codex be the default LLM without
+    removing the previously-working Claude path.
+    """
+    primary = os.environ.get("CBS_LLM_PRIMARY", "codex").strip().lower()
 
-    # 2. Gemini API fallback
+    cli_backends = [("codex", _call_codex_cli), ("claude", _call_claude_cli)]
+    if primary == "claude":
+        cli_backends.reverse()
+
+    for name, backend in cli_backends:
+        result_call = backend(prompt)
+        if result_call is not None:
+            return result_call
+        print(f"  [INFO] {name} CLI failed, trying next backend...")
+
+    # Gemini API fallback
     google_key = os.environ.get("GOOGLE_API_KEY", "") or _read_env_key("GOOGLE_API_KEY")
     if google_key:
-        result = _call_gemini(prompt, google_key)
-        if result is not None:
-            return result
+        result_call = _call_gemini(prompt, google_key)
+        if result_call is not None:
+            return result_call
 
-    # 3. Gemini CLI last resort
+    # Gemini CLI last resort
     return _call_gemini_cli(prompt)
 
 
@@ -622,7 +674,7 @@ def _parse_llm_scores(llm_response: str, config_name: str) -> dict:
             continue
 
         if in_findings and current_dim:
-            m = re.match(r'^\[(PASS|WARN|FAIL|CRITICAL|CRIT)\]\s+(.*)', stripped, re.I)
+            m = re.match(r'^\[(PASS|WARN|FAIL|CRITICAL|CRIT)]\s+(.*)', stripped, re.I)
             if m and current_dim in dimensions:
                 ftype_map = {
                     "PASS": "pass", "WARN": "warning",
@@ -715,19 +767,19 @@ class ScenarioQualityEvaluator:
                 "Ensure ANTHROPIC_API_KEY is set or Claude CLI is reachable."
             )
 
-        result = _parse_llm_scores(llm_response, self.name)
+        result_llm_score = _parse_llm_scores(llm_response, self.name)
 
         # ── D-P3: inject static template_alignment score ──────────────────────
         ta_dim = _compute_template_alignment_score(self.cfg)
-        result["dimensions"]["template_alignment"] = ta_dim
+        result_llm_score["dimensions"]["template_alignment"] = ta_dim
         # Recompute overall as mean of all 7 dimensions (6 LLM + 1 static)
-        all_scores = [d["score"] for d in result["dimensions"].values()]
-        result["overall_score"] = round(sum(all_scores) / len(all_scores), 1)
-        result["overall_grade"] = _grade(result["overall_score"])
+        all_scores = [d["score"] for d in result_llm_score["dimensions"].values()]
+        result_llm_score["overall_score"] = round(sum(all_scores) / len(all_scores), 1)
+        result_llm_score["overall_grade"] = _grade(result_llm_score["overall_score"])
 
-        result["llm_assessment"] = llm_response
-        result["cve_metrics"]    = self._extract_cve_metrics()
-        return result
+        result_llm_score["llm_assessment"] = llm_response
+        result_llm_score["cve_metrics"]    = self._extract_cve_metrics()
+        return result_llm_score
 
     # ── Backward-compatible aliases ───────────────────────────────────────────
 
@@ -822,11 +874,11 @@ GRADE_COLORS = {
 }
 
 
-def format_report(result: dict) -> str:
+def format_report(result_to_report: dict) -> str:
     lines = []
-    name    = result.get("config_name", "unknown")
-    overall = result.get("overall_score", 0)
-    grade   = result.get("overall_grade", "?")
+    name    = result_to_report.get("config_name", "unknown")
+    overall = result_to_report.get("overall_score", 0)
+    grade   = result_to_report.get("overall_grade", "?")
     label   = GRADE_COLORS.get(grade, "")
 
     lines += [
@@ -839,14 +891,14 @@ def format_report(result: dict) -> str:
         "─" * 62,
     ]
 
-    for dim in result.get("dimensions", {}).values():
+    for dim in result_to_report.get("dimensions", {}).values():
         score = dim["score"]
         bar   = "█" * score + "░" * (10 - score)
         lines.append(f"  {dim['name']:<40} {score:>2}/10 ({dim['grade']}) [{bar}]")
 
     lines += ["", "DETAILED FINDINGS:", "─" * 62]
 
-    for dim in result.get("dimensions", {}).values():
+    for dim in result_to_report.get("dimensions", {}).values():
         lines.append(f"\n  ── {dim['name']} ──")
         for f in dim.get("findings", []):
             icon    = ICONS.get(f["type"], "?")
@@ -855,7 +907,7 @@ def format_report(result: dict) -> str:
             lines.append(f"    {icon}  {f['message']}{ref_str}{ded_str}")
 
     lines += ["", "TOP ISSUES:", "─" * 62]
-    top = result.get("top_issues", [])
+    top = result_to_report.get("top_issues", [])
     if top:
         for i, issue in enumerate(top, 1):
             ref_str = f"  [{issue['ref']}]" if issue.get("ref") else ""
@@ -866,7 +918,7 @@ def format_report(result: dict) -> str:
     else:
         lines.append("  No critical issues found — scenario looks realistic!")
 
-    lines += ["", f"SUMMARY: {result.get('summary', '')}", ""]
+    lines += ["", f"SUMMARY: {result_to_report.get('summary', '')}", ""]
     return "\n".join(lines)
 
 
@@ -885,7 +937,6 @@ def evaluate_yaml_file(path: Path, graph_metrics: Optional[dict] = None) -> dict
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser(
         description="Evaluate CyberBattleSim domain config quality via LLM"
