@@ -16,11 +16,10 @@ import os
 import shutil
 import subprocess
 import sys
-import textwrap
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import yaml
 
@@ -304,17 +303,37 @@ def step_report(
     fetch_ok: bool,
     vulns_added: int,
     start_ts: float,
-):
-    """Generate the Phase 1 human-readable summary report."""
+) -> str:
+    """Generate the Phase 1 human-readable summary report.
+
+    Returns the computed status ("SUCCESS" | "PARTIAL" | "FAILED") so the
+    caller's final message/exit code can match this report exactly, instead
+    of re-deriving (and potentially disagreeing with) it independently.
+    """
     report_path = out_dir / "reports" / "phase1_summary.txt"
     report_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    status = "SUCCESS" if eval_data and eval_data.get("aggregate", {}).get("solve_rate", 0) > 0.5 else "PARTIAL"
-    
+
+    # check_data["valid"] (static config validation, step 4) must gate the
+    # status label — it previously only fed the machine-readable JSON while
+    # this report's status was computed purely from the dynamic solve rate,
+    # so a config with real static errors could still read "SUCCESS"/
+    # "PARTIAL" here even though 03_validation.json said {"valid": false}.
+    # The machine verdict is now authoritative: any static failure means the
+    # human-readable report can never claim more than FAILED, regardless of
+    # how well generation/evaluation happened to go afterward.
+    config_valid = bool(check_data.get("valid", True))
+    if not config_valid:
+        status = "FAILED"
+    elif eval_data and eval_data.get("aggregate", {}).get("solve_rate", 0) > 0.5:
+        status = "SUCCESS"
+    else:
+        status = "PARTIAL"
+
     lines = [
         "╔" + "═" * 66 + "╗",
         f"  PIPELINE REPORT: {domain.upper()}",
         f"  Status   : {status}",
+        f"  Config Valid : {config_valid} ({len(check_data.get('errors', []))} static errors)",
         f"  Finished : {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "╚" + "═" * 66 + "╝",
         "",
@@ -341,7 +360,12 @@ def step_report(
         ]
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
-    _ok(f"Final report → {report_path.relative_to(REPO_ROOT)}")
+    try:
+        shown_path = report_path.relative_to(REPO_ROOT)
+    except ValueError:
+        shown_path = report_path  # out_dir is outside REPO_ROOT (e.g. a custom DATASET_ROOT)
+    _ok(f"Final report → {shown_path}")
+    return status
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -465,7 +489,7 @@ def main():
         eval_data = None
 
     # ── Step 8: Final report ──────────────────────────────────────────────────
-    step_report(
+    status = step_report(
         out_dir     = domain_root,
         domain      = domain,
         eval_data   = eval_data,
@@ -477,7 +501,18 @@ def main():
         start_ts    = start_ts,
     )
 
-    print(f"\n{C.BOLD}{C.GREEN}  Pipeline complete in {round(time.time()-start_ts,1)}s{C.END}")
+    # The final message and exit code must match step_report's own verdict —
+    # "pipeline continued to the end" is not the same claim as "validation
+    # passed". A FAILED status (real static config errors) must never print
+    # as if the run succeeded, and must be visible to any caller checking the
+    # process exit code (e.g. a CI gate or an orchestrating script).
+    if status == "FAILED":
+        print(f"\n{C.BOLD}{C.RED}  PHASE 1 FAILED in {round(time.time()-start_ts,1)}s "
+              f"— static config validation failed, see 03_validation.json{C.END}")
+        print(f"  All outputs in: {C.CYAN}{domain_root.resolve()}{C.END}\n")
+        sys.exit(1)
+
+    print(f"\n{C.BOLD}{C.GREEN}  Pipeline complete ({status}) in {round(time.time()-start_ts,1)}s{C.END}")
     print(f"  All outputs in: {C.CYAN}{domain_root.resolve()}{C.END}\n")
 
 
