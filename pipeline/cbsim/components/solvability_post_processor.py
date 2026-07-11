@@ -19,7 +19,7 @@ from typing import Dict, List, Tuple, Optional
 from cyberbattle.simulation.firewall import FirewallRule, RulePermission
 from cyberbattle.simulation.vulenrabilites import (
     VulnerabilityInfo, VulnerabilityType, LeakedCredentials, CachedCredential,
-    PrivilegeEscalation, LeakedNodesId, PrivilegeLevel
+    PrivilegeEscalation, LeakedNodesId, PrivilegeLevel, LateralMove
 )
 from cyberbattle.simulation.rate import Rates
 from pipeline import constants as C
@@ -155,6 +155,7 @@ class SolvabilityPostProcessor:
         self._ensure_discovery()
         self._ensure_goal_access()
         self._ensure_goal_reachable()
+        self._ensure_full_coverage()      # guarantee every config-defined slot appears ≥1 time
 
         stats = self._compute_stats()
         print(f"[Solvability] Applied {len(self.fixes_applied)} fixes")
@@ -165,12 +166,142 @@ class SolvabilityPostProcessor:
             'stats': stats
         }
 
+    def _ensure_full_coverage(self) -> None:
+        """Coverage sweep: force-place every defined Solvability.* slot on ≥1 node.
+
+        Runs after all probabilistic placement.  Any slot defined in
+        solvability_vulnerabilities that got zero instances (low probability or
+        sparse matching nodes) is placed on 1 eligible node.  This makes
+        config-defined slots == instance-observed slots, giving the DRL agent
+        a gradient signal for every action slot the config declares.
+        """
+        solv = self.config.get('solvability_vulnerabilities', {})
+        defined: Dict[str, tuple] = {}  # name → (template, category)
+        for category, entries in solv.items():
+            if not isinstance(entries, list):
+                continue
+            for tmpl in entries:
+                if not isinstance(tmpl, dict):
+                    continue
+                name = tmpl.get('name', '')
+                if name.startswith('Solvability.') and name not in defined:
+                    defined[name] = (tmpl, category)
+
+        if not defined:
+            return
+
+        # Which names are already in any node's vulnerabilities dict?
+        placed: set = set()
+        for node in self.nodes.values():
+            vulns = getattr(node, 'vulnerabilities', {})
+            if isinstance(vulns, dict):
+                placed.update(k for k in vulns if k.startswith('Solvability.'))
+
+        missing = set(defined.keys()) - placed
+        if not missing:
+            print(f"[Coverage] All {len(defined)} slots placed — no sweep needed.")
+            return
+
+        print(f"[Coverage] Sweep: {len(missing)}/{len(defined)} slots unplaced — force-placing")
+
+        swept = 0
+        for name in sorted(missing):
+            tmpl, category = defined[name]
+            match_props = tmpl.get('match_properties', [])
+
+            # Find eligible nodes: not 'start', doesn't already have this vuln,
+            # and has at least one of the match_properties (OR logic, same as generator).
+            eligible = [
+                nid for nid, node in self.nodes.items()
+                if nid != 'start'
+                and name not in getattr(node, 'vulnerabilities', {})
+                and (
+                    not match_props
+                    or any(p in set(getattr(node, 'properties', [])) for p in match_props)
+                )
+            ]
+
+            if not eligible:
+                print(f"[Coverage]   SKIP {name} — no eligible node (match_props={match_props})")
+                continue
+
+            # Coverage and topology density are separate concerns. Reuse nodes
+            # that already provide the same capability so forcing every action
+            # slot does not turn every node into a credential/discovery source.
+            preferred = eligible
+            if category == 'credential_leak':
+                same_capability = [
+                    nid for nid in eligible
+                    if self._has_credential_leak(self.nodes[nid])
+                ]
+                preferred = same_capability or eligible
+            elif 'discovery' in category or 'probe' in category:
+                same_capability = [
+                    nid for nid in eligible
+                    if self._has_discovery_capability(self.nodes[nid])
+                ]
+                preferred = same_capability or eligible
+            elif category == 'remote_access':
+                same_capability = [
+                    nid for nid in eligible
+                    if any(
+                        getattr(v, 'type', None) == VulnerabilityType.REMOTE
+                        and isinstance(getattr(v, 'outcome', None), LateralMove)
+                        for v in (getattr(self.nodes[nid], 'vulnerabilities', {}) or {}).values()
+                    )
+                ]
+                preferred = same_capability or eligible
+
+            target_id = min(preferred, key=lambda nid: len(
+                getattr(self.nodes[nid], 'vulnerabilities', {}) or {}
+            ))
+            target_node = self.nodes[target_id]
+            vulns = getattr(target_node, 'vulnerabilities', {})
+            if not isinstance(vulns, dict):
+                vulns = {}
+
+            vuln_type_str = tmpl.get('type', 'LOCAL')
+            vuln_type = VulnerabilityType.REMOTE if vuln_type_str == 'REMOTE' else VulnerabilityType.LOCAL
+
+            # Build the most appropriate outcome for this category
+            if vuln_type == VulnerabilityType.REMOTE or category == 'remote_access':
+                outcome = LateralMove()
+            elif 'discovery' in category or 'probe' in category:
+                others = [n for n in self.nodes if n not in (target_id, 'start')]
+                outcome = LeakedNodesId(nodes=others[:3])
+            elif any(k in category for k in ('goal', 'privesc', 'lateral', 'escalat')):
+                outcome = PrivilegeEscalation(level=PrivilegeLevel.System)
+            else:
+                # credential_leak and everything else
+                creds = self._make_cached_credentials(target_id)
+                if creds:
+                    outcome = LeakedCredentials(credentials=creds)
+                else:
+                    others = [n for n in self.nodes if n not in (target_id, 'start')]
+                    outcome = LeakedNodesId(nodes=others[:1])
+
+            vulns[name] = VulnerabilityInfo(
+                description=tmpl.get('description', f'Coverage sweep: {name}'),
+                type=vuln_type,
+                outcome=outcome,
+                precondition=precondition_from_properties(match_props),
+                reward_string=tmpl.get('reward', f'{name} exploited'),
+                cost=self._get_vulnerability_cost(tmpl),
+                rates=Rates(successRate=tmpl.get('success_rate', 0.7)),
+            )
+            target_node.vulnerabilities = vulns
+            swept += 1
+            self.fixes_applied.append(f"Coverage sweep: {name} → {target_id}")
+
+        print(f"[Coverage] Sweep complete: {swept}/{len(missing)} slots placed"
+              + (f" ({len(missing)-swept} skipped — no matching node)" if swept < len(missing) else ""))
+
     def _compute_stats(self) -> Dict:
         """Compute placement stats for debugging/analysis."""
         total = len([n for n in self.nodes if n != 'start'])
-        remote_count = 0
-        cred_leak_count = 0
-        discovery_count = 0
+        remote_nodes = set()
+        cred_leak_nodes = set()
+        discovery_nodes = set()
 
         for nid, node in self.nodes.items():
             if nid == 'start':
@@ -181,19 +312,19 @@ class SolvabilityPostProcessor:
             for v in vulns.values():
                 outcome = getattr(v, 'outcome', None)
                 vtype = getattr(v, 'type', None)
-                if vtype == VulnerabilityType.REMOTE and isinstance(outcome, LeakedCredentials):
-                    remote_count += 1
+                if vtype == VulnerabilityType.REMOTE and isinstance(outcome, LateralMove):
+                    remote_nodes.add(nid)
                 if isinstance(outcome, LeakedCredentials) and vtype == VulnerabilityType.LOCAL:
-                    cred_leak_count += 1
+                    cred_leak_nodes.add(nid)
                 if isinstance(outcome, LeakedNodesId):
-                    discovery_count += 1
+                    discovery_nodes.add(nid)
 
         return {
             'total_nodes': total,
-            'nodes_with_remote_exploit': remote_count,
-            'nodes_with_cred_leak': cred_leak_count,
-            'nodes_with_discovery': discovery_count,
-            'cred_leak_ratio': round(cred_leak_count / total, 2) if total > 0 else 0
+            'nodes_with_remote_exploit': len(remote_nodes),
+            'nodes_with_cred_leak': len(cred_leak_nodes),
+            'nodes_with_discovery': len(discovery_nodes),
+            'cred_leak_ratio': round(len(cred_leak_nodes) / total, 2) if total > 0 else 0
         }
 
     # =========================================================================
@@ -320,7 +451,18 @@ class SolvabilityPostProcessor:
                     break
 
         if not targets:
-            targets = [nid for nid in self.nodes if nid != source_node_id and nid != 'start']
+            # Fallback pool for sources with no matching attack_flow pattern.
+            # Goal nodes are excluded here — goal reachability is deliberately
+            # guaranteed by _ensure_goal_reachable() alone, via a direct,
+            # deterministic credential injection (not target selection).
+            # Without this exclusion, any node that fails to match an
+            # attack_flow pattern gets an unrestricted credential-leak target
+            # pool that can (and empirically did, ~100% of the time in some
+            # scenarios) randomly wire a direct start->entry->goal shortcut,
+            # collapsing the intended multi-hop chain regardless of topology.
+            targets = [nid for nid in self.nodes
+                       if nid != source_node_id and nid != 'start'
+                       and nid not in self.goal_node_ids]
 
         self._reachable_cache[source_node_id] = targets
         return targets
@@ -390,11 +532,31 @@ class SolvabilityPostProcessor:
                 return tmpl
         return fallback
 
-    def _get_cred_leak_template(self) -> Optional[Dict]:
-        return self.cred_leak_templates[0] if self.cred_leak_templates else None
+    def _get_cred_leak_template(self, node_properties: set = None) -> Optional[Dict]:
+        if node_properties is None:
+            return self.cred_leak_templates[0] if self.cred_leak_templates else None
+        fallback = None
+        for tmpl in self.cred_leak_templates:
+            match_props = tmpl.get('match_properties', [])
+            if not match_props:
+                fallback = fallback or tmpl
+                continue
+            if any(p in node_properties for p in match_props):
+                return tmpl
+        return fallback
 
-    def _get_discovery_template(self) -> Optional[Dict]:
-        return self.discovery_templates[0] if self.discovery_templates else None
+    def _get_discovery_template(self, node_properties: set = None) -> Optional[Dict]:
+        if node_properties is None:
+            return self.discovery_templates[0] if self.discovery_templates else None
+        fallback = None
+        for tmpl in self.discovery_templates:
+            match_props = tmpl.get('match_properties', [])
+            if not match_props:
+                fallback = fallback or tmpl
+                continue
+            if any(p in node_properties for p in match_props):
+                return tmpl
+        return fallback
 
     # =========================================================================
     # ENSURE ENTRY POINT ACCESS (FORCED — probability ignored)
@@ -511,7 +673,7 @@ class SolvabilityPostProcessor:
                 continue
 
             is_critical = node_id in self.entry_node_ids or node_id in self.goal_node_ids
-            tmpl = self._get_cred_leak_template()
+            tmpl = self._get_cred_leak_template(set(getattr(node, 'properties', []) or []))
             if tmpl and self._should_place(tmpl, force=is_critical):
                 self._add_credential_leak_vulnerability(node, node_id, force=True)
                 placed += 1
@@ -532,16 +694,28 @@ class SolvabilityPostProcessor:
     # =========================================================================
 
     def _ensure_discovery(self):
-        for node_id, node in self.nodes.items():
-            if node_id == 'start':
-                continue
+        rules = self.config.get('solvability_rules', {})
+        discovery_rules = rules.get('discovery_requirements', {})
+        max_ratio = float(discovery_rules.get('max_discovery_nodes', 0.30))
+        non_start = [nid for nid in self.nodes if nid != 'start']
+        max_count = max(1, math.ceil(len(non_start) * max_ratio))
+        placed = sum(
+            1 for nid in non_start
+            if self._has_discovery_capability(self.nodes[nid])
+        )
+
+        for node_id in non_start:
+            if placed >= max_count:
+                break
+            node = self.nodes[node_id]
             if self._has_discovery_capability(node):
                 continue
 
             is_critical = node_id in self.entry_node_ids
-            tmpl = self._get_discovery_template()
+            tmpl = self._get_discovery_template(set(getattr(node, 'properties', []) or []))
             if tmpl and self._should_place(tmpl, force=is_critical):
                 self._add_discovery_vulnerability(node, node_id, force=True)
+                placed += 1
 
         # After probabilistic placement, verify goal nodes are reachable
         self._ensure_goal_discoverable()
@@ -584,37 +758,46 @@ class SolvabilityPostProcessor:
             if goal_id in discovered_anywhere:
                 continue
 
+            # Prefer whichever node already has discovery capability from the
+            # natural/probabilistic placement pass — NOT entry nodes specifically.
+            # Always injecting into an entry node collapses every goal to a
+            # trivial start→entry→goal shortcut regardless of the scenario's
+            # intended attack-flow depth (this was measured: 77% of goals
+            # ending up at graph-hop-depth 2 across the dataset).
             injected = False
-            for nid in self.entry_node_ids:
+            for nid, v in nodes_with_discovery:
                 if nid == goal_id:
                     continue
-                node = self.nodes.get(nid)
-                if not node:
-                    continue
-                vulns = getattr(node, 'vulnerabilities', {})
-                if isinstance(vulns, dict):
-                    for v in vulns.values():
-                        outcome = getattr(v, 'outcome', None)
-                        if isinstance(outcome, LeakedNodesId):
-                            outcome.nodes.append(goal_id)
-                            discovered_anywhere.add(goal_id)
-                            injected = True
-                            self.fixes_applied.append(
-                                f"Injected goal {goal_id} into {nid}'s discovery")
-                            break
-                if injected:
+                outcome = getattr(v, 'outcome', None)
+                if isinstance(outcome, LeakedNodesId):
+                    outcome.nodes.append(goal_id)
+                    discovered_anywhere.add(goal_id)
+                    injected = True
+                    self.fixes_applied.append(
+                        f"Injected goal {goal_id} into {nid}'s discovery (fallback)")
                     break
 
+            # Only fall back to entry nodes if no other node has any discovery
+            # capability at all — last resort, not first choice.
             if not injected:
-                for nid, v in nodes_with_discovery:
+                for nid in self.entry_node_ids:
                     if nid == goal_id:
                         continue
-                    outcome = getattr(v, 'outcome', None)
-                    if isinstance(outcome, LeakedNodesId):
-                        outcome.nodes.append(goal_id)
-                        discovered_anywhere.add(goal_id)
-                        self.fixes_applied.append(
-                            f"Injected goal {goal_id} into {nid}'s discovery (fallback)")
+                    node = self.nodes.get(nid)
+                    if not node:
+                        continue
+                    vulns = getattr(node, 'vulnerabilities', {})
+                    if isinstance(vulns, dict):
+                        for v in vulns.values():
+                            outcome = getattr(v, 'outcome', None)
+                            if isinstance(outcome, LeakedNodesId):
+                                outcome.nodes.append(goal_id)
+                                discovered_anywhere.add(goal_id)
+                                injected = True
+                                self.fixes_applied.append(
+                                    f"Injected goal {goal_id} into {nid}'s discovery (entry, last resort)")
+                                break
+                    if injected:
                         break
 
     # =========================================================================
@@ -711,12 +894,17 @@ class SolvabilityPostProcessor:
                 continue
 
             injected = False
-            # Prefer entry nodes or nodes with existing credential leaks
-            candidates = list(self.entry_node_ids)
+            # Prefer nodes that already have a credential leak from the
+            # natural/probabilistic placement pass — extending an existing
+            # leak preserves whatever depth that node already sits at.
+            # Falling back to entry nodes by default wires every goal
+            # directly to the network's shallowest node (depth 1 from start),
+            # collapsing the whole scenario to a trivial 2-hop shortcut.
+            candidates = [nid for nid in self.nodes
+                          if nid != goal_id and nid != 'start'
+                          and self._has_credential_leak(self.nodes[nid])]
             if not candidates:
-                candidates = [nid for nid in self.nodes
-                              if nid != goal_id and nid != 'start'
-                              and self._has_credential_leak(self.nodes[nid])]
+                candidates = list(self.entry_node_ids)
             random.shuffle(candidates)
 
             for nid in candidates:
@@ -746,9 +934,35 @@ class SolvabilityPostProcessor:
                 if candidates:
                     nid = candidates[0]
                     node = self.nodes[nid]
-                    self._add_credential_leak_vulnerability(node, nid, force=True)
-                    self.fixes_applied.append(
-                        f"Created credential leak on {nid} for goal {goal_id}")
+                    # Seed a brand-new credential-leak vuln EXPLICITLY with
+                    # goal_creds, rather than calling the generic
+                    # _add_credential_leak_vulnerability (which picks targets
+                    # via _find_reachable_target_nodes + random selection —
+                    # that pool deliberately excludes goal nodes now, so the
+                    # generic call could never actually include this goal).
+                    # This guarantee must not depend on chance.
+                    tmpl = self._get_cred_leak_template(set(getattr(node, 'properties', []) or []))
+                    if tmpl and self._check_planned(tmpl, 'cred_leak'):
+                        vulns = getattr(node, 'vulnerabilities', {})
+                        if not isinstance(vulns, dict):
+                            vulns = {}
+                        vulns[tmpl['name']] = VulnerabilityInfo(
+                            description=tmpl['description'],
+                            type=VulnerabilityType.LOCAL,
+                            outcome=LeakedCredentials(credentials=goal_creds),
+                            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
+                            reward_string=tmpl.get('reward', 'Exploit successful'),
+                            cost=self._get_vulnerability_cost(tmpl),
+                            rates=Rates(successRate=tmpl['success_rate']),
+                        )
+                        node.vulnerabilities = vulns
+                        self._open_firewall_for_cred(nid, goal_id)
+                        self.fixes_applied.append(
+                            f"Created credential leak on {nid} for goal {goal_id}")
+                    else:
+                        print(f"[Solvability] WARNING: goal {goal_id} — no eligible "
+                              f"credential-leak template for candidate {nid}. "
+                              f"Scenario may be unsolvable.")
                 else:
                     print(f"[Solvability] WARNING: goal {goal_id} has no reachable "
                           f"credential path and no injection candidate. "
@@ -765,14 +979,10 @@ class SolvabilityPostProcessor:
 
         has_exploitable_remote = any(
             getattr(v, 'type', None) == VulnerabilityType.REMOTE
-            and isinstance(getattr(v, 'outcome', None), LeakedCredentials)
+            and isinstance(getattr(v, 'outcome', None), LateralMove)
             for v in vulns.values()
         )
         if has_exploitable_remote:
-            return
-
-        real_creds = self._make_cached_credentials(node_id)
-        if not real_creds:
             return
 
         tmpl = self._pick_remote_template(set(getattr(node, 'properties', [])))
@@ -785,7 +995,7 @@ class SolvabilityPostProcessor:
         vulns[tmpl['name']] = VulnerabilityInfo(
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
-            outcome=LeakedCredentials(credentials=real_creds),
+            outcome=LateralMove(),
             precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
@@ -799,7 +1009,7 @@ class SolvabilityPostProcessor:
         if not isinstance(vulns, dict):
             vulns = {}
 
-        tmpl = self._get_cred_leak_template()
+        tmpl = self._get_cred_leak_template(set(getattr(node, 'properties', []) or []))
         if not tmpl or not self._check_planned(tmpl, 'cred_leak'):
             return
 
@@ -847,7 +1057,7 @@ class SolvabilityPostProcessor:
         if not isinstance(vulns, dict):
             vulns = {}
 
-        tmpl = self._get_discovery_template()
+        tmpl = self._get_discovery_template(set(getattr(node, 'properties', []) or []))
         if not tmpl or not self._check_planned(tmpl, 'discovery'):
             return
 

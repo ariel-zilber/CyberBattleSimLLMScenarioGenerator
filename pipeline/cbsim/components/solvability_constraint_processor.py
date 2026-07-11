@@ -13,8 +13,9 @@ import random
 
 from cyberbattle.simulation.vulenrabilites import (
     VulnerabilityInfo, VulnerabilityType, LeakedCredentials,
-    CachedCredential, LeakedNodesId
+    CachedCredential, LeakedNodesId, LateralMove
 )
+from cyberbattle.simulation.firewall import FirewallRule, RulePermission
 from cyberbattle.simulation.rate import Rates
 from pipeline import constants as C
 from pipeline.cbsim.components.precondition_utils import precondition_from_properties
@@ -56,7 +57,8 @@ class SolvabilityConstraintProcessor:
             return False
         return True
 
-    def _should_place(self, template: Dict, force: bool = False) -> bool:
+    @staticmethod
+    def _should_place(template: Dict, force: bool = False) -> bool:
         """Probabilistic placement. force=True bypasses probability."""
         if force:
             return True
@@ -114,6 +116,21 @@ class SolvabilityConstraintProcessor:
                     if self._id_matches(pattern, nid):
                         targets.append(nid)
                         break
+
+        if not targets and isinstance(self.nodes, dict):
+            # Goal nodes are excluded from this fallback pool — goal
+            # reachability is guaranteed downstream by
+            # SolvabilityPostProcessor._ensure_goal_reachable() (which runs
+            # after this processor, deterministically). Without this
+            # exclusion, any node with no matching attack_flow pattern gets
+            # an unrestricted credential-leak target pool that randomly
+            # wires direct start->entry->goal shortcuts, collapsing the
+            # intended multi-hop chain (measured: 100% of goals landing at
+            # graph-hop-depth 2 in some scenarios).
+            goal_ids = {nid for nid, n in self.nodes.items()
+                        if nid != 'start' and self._get_attr(n, 'is_goal')}
+            targets = [nid for nid in self.nodes
+                       if nid != node_id and nid != 'start' and nid not in goal_ids]
         return targets
 
     @staticmethod
@@ -127,11 +144,31 @@ class SolvabilityConstraintProcessor:
     # YAML TEMPLATE HELPERS
     # =========================================================================
 
-    def _get_cred_leak_template(self):
-        return self.cred_leak_templates[0] if self.cred_leak_templates else None
+    def _get_cred_leak_template(self, node_properties: set = None):
+        if node_properties is None:
+            return self.cred_leak_templates[0] if self.cred_leak_templates else None
+        fallback = None
+        for tmpl in self.cred_leak_templates:
+            match_props = tmpl.get('match_properties', [])
+            if not match_props:
+                fallback = fallback or tmpl
+                continue
+            if any(p in node_properties for p in match_props):
+                return tmpl
+        return fallback
 
-    def _get_discovery_template(self):
-        return self.discovery_templates[0] if self.discovery_templates else None
+    def _get_discovery_template(self, node_properties: set = None):
+        if node_properties is None:
+            return self.discovery_templates[0] if self.discovery_templates else None
+        fallback = None
+        for tmpl in self.discovery_templates:
+            match_props = tmpl.get('match_properties', [])
+            if not match_props:
+                fallback = fallback or tmpl
+                continue
+            if any(p in node_properties for p in match_props):
+                return tmpl
+        return fallback
 
     def _pick_remote_template(self, node_properties: set):
         fallback = None
@@ -186,7 +223,7 @@ class SolvabilityConstraintProcessor:
                     if target_creds:
                         for sid in source_ids:
                             if isinstance(self.nodes, dict) and sid in self.nodes:
-                                self._add_credential_leak_vuln(self.nodes[sid], target_creds)
+                                self._add_credential_leak_vuln(self.nodes[sid], target_creds, node_id=sid)
 
     # =========================================================================
     # CREDENTIAL FLOWS
@@ -212,7 +249,7 @@ class SolvabilityConstraintProcessor:
             if target_creds:
                 for sid in source_ids:
                     if isinstance(self.nodes, dict) and sid in self.nodes:
-                        self._add_credential_leak_vuln(self.nodes[sid], target_creds)
+                        self._add_credential_leak_vuln(self.nodes[sid], target_creds, node_id=sid)
 
     # =========================================================================
     # DISCOVERY CHAINS
@@ -245,7 +282,7 @@ class SolvabilityConstraintProcessor:
         if has_discovery:
             return
 
-        tmpl = self._get_discovery_template()
+        tmpl = self._get_discovery_template(set(self._get_attr(node, 'properties', []) or []))
         if not tmpl:
             return
         if not self._check_planned(tmpl, 'discovery'):
@@ -261,6 +298,7 @@ class SolvabilityConstraintProcessor:
             description=desc,
             type=VulnerabilityType.LOCAL,
             outcome=LeakedNodesId(nodes=resolved_ids),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
             rates=Rates(successRate=tmpl['success_rate'])
@@ -369,18 +407,59 @@ class SolvabilityConstraintProcessor:
         goal_nodes = [(nid, n) for nid, n in self.nodes.items()
                       if nid != 'start' and self._get_attr(n, 'is_goal')]
         if not goal_nodes and auto_fix:
+            num_goals = self.config.get('config', {}).get('goal_config', {}).get('num_goals', 3)
             candidates = [nid for nid in self.nodes if nid != 'start']
             random.shuffle(candidates)
-            for nid in candidates[:3]:
+            for nid in candidates[:num_goals]:
                 self._set_attr(self.nodes[nid], 'is_goal', True)
 
     # =========================================================================
     # VULNERABILITY ADDERS — ALL FROM YAML + REAL CREDENTIALS
     # =========================================================================
 
+    def _open_firewall_for_cred(self, src_id: str, dst_id: str):
+        """Add bidirectional firewall rules so src can reach dst via its services.
+
+        Called whenever a credential leak is placed so agents can actually use
+        the leaked credentials.  Rules are added only if not already present.
+        """
+        if src_id not in self.nodes or dst_id not in self.nodes:
+            return
+        src_node = self.nodes[src_id]
+        dst_node = self.nodes[dst_id]
+        src_ni = getattr(src_node, 'network_info', [])
+        dst_ni = getattr(dst_node, 'network_info', [])
+        if not src_ni or not dst_ni:
+            return
+        src_subnet = src_ni[0].subnet
+        dst_subnet = dst_ni[0].subnet
+
+        def _existing_ports(rules):
+            return {str(getattr(r, 'port', '')) for r in rules}
+
+        src_out_ports = _existing_ports(getattr(src_node.firewall, 'outgoing', []))
+        dst_in_ports  = _existing_ports(getattr(dst_node.firewall, 'incoming', []))
+
+        for svc in getattr(dst_node, 'services', []):
+            port = getattr(svc, 'name', None)
+            if not port or port in ('*', 'any'):
+                continue
+            if port not in src_out_ports:
+                src_node.firewall.outgoing.append(FirewallRule(
+                    port=port, permission=RulePermission.ALLOW,
+                    subnet=dst_subnet, reason=""
+                ))
+                src_out_ports.add(port)
+            if port not in dst_in_ports:
+                dst_node.firewall.incoming.append(FirewallRule(
+                    port=port, permission=RulePermission.ALLOW,
+                    subnet=src_subnet, reason=""
+                ))
+                dst_in_ports.add(port)
+
     def _add_credential_leak_vuln(self, node, cached_creds: List[CachedCredential],
-                                   force: bool = False):
-        tmpl = self._get_cred_leak_template()
+                                   force: bool = False, node_id: str = None):
+        tmpl = self._get_cred_leak_template(set(self._get_attr(node, 'properties', []) or []))
         if not tmpl:
             return
         if not self._check_planned(tmpl, 'credential_leak'):
@@ -402,9 +481,29 @@ class SolvabilityConstraintProcessor:
             rates=Rates(successRate=tmpl['success_rate'])
         )
         self._set_attr(node, 'vulnerabilities', vulns)
+
+        # Ensure the firewall allows credential-based lateral movement for each
+        # credential we just leaked.  Without matching rules the simulation
+        # blocks the connection even when the agent has valid credentials.
+        if node_id is not None:
+            target_ids = {cred.node for cred in cached_creds}
+            for tid in target_ids:
+                self._open_firewall_for_cred(node_id, tid)
         self.fixes_applied.append(f"Added credential leak ({tmpl['name']}) to {self._get_attr(node, 'name', '?')}")
 
     def _add_remote_vuln(self, node, node_id: str, force: bool = False):
+        vulns = self._get_attr(node, 'vulnerabilities', {})
+        if not isinstance(vulns, dict):
+            vulns = {}
+
+        has_exploitable_remote = any(
+            self._get_attr(v, 'type', None) == VulnerabilityType.REMOTE
+            and isinstance(self._get_attr(v, 'outcome', None), LateralMove)
+            for v in vulns.values()
+        )
+        if has_exploitable_remote:
+            return
+
         tmpl = self._pick_remote_template(set(self._get_attr(node, 'properties', [])))
         if not tmpl:
             return
@@ -413,18 +512,10 @@ class SolvabilityConstraintProcessor:
         if not self._should_place(tmpl, force=force):
             return
 
-        real_creds = self._make_cached_credentials_for_targets([node_id])
-        if not real_creds:
-            return
-
-        vulns = self._get_attr(node, 'vulnerabilities', {})
-        if not isinstance(vulns, dict):
-            vulns = {}
-
         vulns[tmpl['name']] = VulnerabilityInfo(
             description=tmpl['description'],
             type=VulnerabilityType.REMOTE,
-            outcome=LeakedCredentials(credentials=real_creds),
+            outcome=LateralMove(),
             precondition=precondition_from_properties(tmpl.get('match_properties', [])),
             reward_string=tmpl.get('reward', 'Exploit successful'),
             cost=self._get_vulnerability_cost(tmpl),
@@ -437,10 +528,18 @@ class SolvabilityConstraintProcessor:
         targets = self._find_reachable_targets(node_id)
         if not targets:
             if isinstance(self.nodes, dict):
-                targets = [nid for nid in self.nodes if nid != node_id and nid != 'start']
+                # Same goal-node exclusion as _find_reachable_targets' own
+                # fallback — this caller-level fallback should almost never
+                # fire now (that function returns a non-empty pool whenever
+                # any non-goal node exists), but stays exclusion-safe in case
+                # it ever does (e.g. a network with only goal nodes left).
+                goal_ids = {nid for nid, n in self.nodes.items()
+                            if nid != 'start' and self._get_attr(n, 'is_goal')}
+                targets = [nid for nid in self.nodes
+                           if nid != node_id and nid != 'start' and nid not in goal_ids]
 
         # Pick a SUBSET based on YAML target_coverage
-        tmpl = self._get_cred_leak_template()
+        tmpl = self._get_cred_leak_template(set(self._get_attr(node, 'properties', []) or []))
         selected = self._select_targets(targets, tmpl) if tmpl else targets[:1]
         cached = self._make_cached_credentials_for_targets(selected)
 
@@ -449,9 +548,10 @@ class SolvabilityConstraintProcessor:
             cached = self._make_cached_credentials_for_targets(targets)
 
         if cached:
-            self._add_credential_leak_vuln(node, cached, force=force)
+            self._add_credential_leak_vuln(node, cached, force=force, node_id=node_id)
 
-    def _select_targets(self, candidates: List[str], template: Dict) -> List[str]:
+    @staticmethod
+    def _select_targets(candidates: List[str], template: Dict) -> List[str]:
         """Pick a random subset based on target_coverage + min_targets from template."""
         if not candidates:
             return []
@@ -486,7 +586,8 @@ class SolvabilityConstraintProcessor:
                 return node
         return None
 
-    def _get_attr(self, obj, attr, default=None):
+    @staticmethod
+    def _get_attr(obj, attr, default=None):
         if isinstance(obj, str):
             return default
         if isinstance(obj, dict):
@@ -495,7 +596,8 @@ class SolvabilityConstraintProcessor:
             return getattr(obj, attr)
         return default
 
-    def _set_attr(self, obj, attr, value):
+    @staticmethod
+    def _set_attr(obj, attr, value):
         if isinstance(obj, str):
             return
         if isinstance(obj, dict):
@@ -503,7 +605,8 @@ class SolvabilityConstraintProcessor:
         else:
             setattr(obj, attr, value)
 
-    def _get_vulnerability_cost(self, tmpl: dict) -> float:
+    @staticmethod
+    def _get_vulnerability_cost(tmpl: dict) -> float:
         """Apply Q10 cost normalization if enabled."""
         cost = tmpl.get('cost', C.DEFAULT_CVE_COST)
         if C.ENABLE_TECHNIQUE_COST_SCALING:
