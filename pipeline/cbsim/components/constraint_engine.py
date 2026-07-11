@@ -99,7 +99,8 @@ class ConstraintEngine:
         vals = list(self.os_mgmt_ports.values())
         return vals[0] if vals else ''
 
-    def _select_source_nodes(self, source_ids: List[str], template: Dict,
+    @staticmethod
+    def _select_source_nodes(source_ids: List[str], template: Dict,
                              selected_set: Set[str], rejected_set: Set[str]) -> List[str]:
         """
         Decide which source nodes get this vulnerability at all.
@@ -121,7 +122,8 @@ class ConstraintEngine:
                     rejected_set.add(sid)
         return chosen
 
-    def _select_targets(self, target_ids: List[str], template: Dict) -> List[str]:
+    @staticmethod
+    def _select_targets(target_ids: List[str], template: Dict) -> List[str]:
         """Pick a random subset of targets based on target_coverage + min_targets."""
         if not target_ids:
             return []
@@ -343,7 +345,8 @@ class ConstraintEngine:
     # CREDENTIAL FINDER
     # --------------------------------------------------------------------------
 
-    def _find_creds(self, target_info: NodeInfo, protocol: str):
+    @staticmethod
+    def _find_creds(target_info: NodeInfo, protocol: str):
         """Find credentials to leak from target. Returns (creds_list, port_name)."""
         creds = []
         port_name = protocol
@@ -376,17 +379,28 @@ class ConstraintEngine:
         dst_subnet = dst_info.network_info[0].subnet
         src_subnet = src_info.network_info[0].subnet
 
+        dst_subnet_str = getattr(dst_subnet, 'network_str', str(dst_subnet))
+        src_subnet_str = getattr(src_subnet, 'network_str', str(src_subnet))
+
         def _add_rule(p: str):
-            key = (source_id, target_id, p)
-            if key in self._fw_seen:
-                return
-            self._fw_seen.add(key)
-            src_info.firewall.outgoing.append(FirewallRule(
-                port=p, permission=RulePermission.ALLOW, subnet=dst_subnet, reason=""
-            ))
-            dst_info.firewall.incoming.append(FirewallRule(
-                port=p, permission=RulePermission.ALLOW, subnet=src_subnet, reason=""
-            ))
+            # Dedup on the rule's actual serialized content (node + port +
+            # subnet), not on (source_id, target_id, port). Multiple distinct
+            # source/target node IDs that share the same subnet would otherwise
+            # each pass a per-pair dedup check and append a structurally
+            # identical rule, producing visible duplicate entries in the
+            # generated firewall config.
+            out_key = (id(src_info), p, dst_subnet_str)
+            in_key  = (id(dst_info), p, src_subnet_str)
+            if out_key not in self._fw_seen:
+                self._fw_seen.add(out_key)
+                src_info.firewall.outgoing.append(FirewallRule(
+                    port=p, permission=RulePermission.ALLOW, subnet=dst_subnet, reason=""
+                ))
+            if in_key not in self._fw_seen:
+                self._fw_seen.add(in_key)
+                dst_info.firewall.incoming.append(FirewallRule(
+                    port=p, permission=RulePermission.ALLOW, subnet=src_subnet, reason=""
+                ))
 
         # Add the semantic protocol rule (e.g., Kerberos, SMB, HTTPS)
         _add_rule(port)
@@ -397,6 +411,89 @@ class ConstraintEngine:
             svc_port = getattr(svc, 'name', None)
             if svc_port and svc_port not in ('*', 'any'):
                 _add_rule(svc_port)
+
+    # --------------------------------------------------------------------------
+    # SEGMENTATION BLOCK RULES (randomized realism pass)
+    # --------------------------------------------------------------------------
+
+    # Commonly-segmented service ports in real enterprise firewalls. Only
+    # ports that actually appear as a service somewhere in this topology are
+    # ever used, so blocked ports stay grounded in the scenario's own
+    # vocabulary rather than introducing unreferenced tokens.
+    _SENSITIVE_BLOCK_PORTS = ["RDP", "SMB", "Telnet", "FTP", "SNMP", "WinRM", "VNC"]
+
+    def add_segmentation_blocks(self, probability: float = None):
+        """
+        Add explicit BLOCK rules for a random subset of (node, foreign subnet)
+        pairs. CyberBattleSim already denies traffic by default when no rule
+        matches a port — this pass doesn't change solvability, it only makes
+        a random slice of that pre-existing segmentation explicit, the way a
+        real firewall ruleset shows deny entries instead of silent omission.
+        Never touches a (port, subnet) pair that already has an ALLOW rule.
+        """
+        cfg = self.config.get('config', {}).get('firewall_config', {})
+        p = probability if probability is not None else cfg.get('block_rule_probability', 0.15)
+        if p <= 0:
+            return
+
+        present_services = {
+            getattr(svc, 'name', None)
+            for node in self.nodes.values()
+            for svc in getattr(node, 'services', [])
+        }
+        present_services.discard(None)
+        # Prefer the curated "commonly segmented" ports when present, but fall
+        # back to whatever real services this topology actually has. Dense
+        # networks (e.g. many MUST_CONNECT/LEAK_KNOWN_CREDENTIALS edges already
+        # opening most of the curated ports everywhere) would otherwise leave
+        # zero (port, subnet) gaps for the curated list to fill, producing no
+        # BLOCK rules at all despite the probability roll firing.
+        candidate_ports = [port for port in self._SENSITIVE_BLOCK_PORTS if port in present_services]
+        candidate_ports += sorted(present_services - set(candidate_ports))
+        if not candidate_ports:
+            return
+
+        subnets_by_str = {}
+        for node in self.nodes.values():
+            if not node.network_info:
+                continue
+            subnet = node.network_info[0].subnet
+            subnets_by_str[getattr(subnet, 'network_str', str(subnet))] = subnet
+        if len(subnets_by_str) < 2:
+            return
+
+        for node in self.nodes.values():
+            if not node.network_info or random.random() >= p:
+                continue
+
+            own_subnet_str = getattr(node.network_info[0].subnet, 'network_str', str(node.network_info[0].subnet))
+            foreign_subnets = [
+                (s_str, s_obj) for s_str, s_obj in subnets_by_str.items() if s_str != own_subnet_str
+            ]
+            if not foreign_subnets:
+                continue
+
+            existing_incoming = {
+                (r.port, getattr(r.subnet, 'network_str', str(r.subnet)))
+                for r in node.firewall.incoming
+            }
+
+            # Search combinations (not just one random guess) so a dense
+            # network — where the first pick is very likely already an
+            # existing ALLOW rule — still gets a real BLOCK rule placed.
+            candidates = [(p_, s_) for p_ in candidate_ports for s_ in foreign_subnets]
+            random.shuffle(candidates)
+            for port, (foreign_str, foreign_subnet) in candidates:
+                if (port, foreign_str) in existing_incoming:
+                    continue
+                node.firewall.incoming.append(FirewallRule(
+                    port=port,
+                    permission=RulePermission.BLOCK,
+                    subnet=foreign_subnet,
+                    reason=f"segmentation policy — {port} denied from {foreign_str}",
+                ))
+                self._fw_seen.add((id(node), port, foreign_str))
+                break
 
     # --------------------------------------------------------------------------
     # PROPERTY MUTATION (always applied)
