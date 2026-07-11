@@ -1,0 +1,21 @@
+STATUS: Task 1/5 of the solvability-file refactor (user-requested, to reduce
+LLM context size and eliminate the stale-fork duplication that caused
+today's earlier regression). Purely additive - verified via `python3 -c
+"import ast; ast.parse(...)"` on all 6 new files, no wiring into the
+existing processors yet, so this commit changes zero runtime behavior.
+
+Next steps (tracked in session task list #2-5):
+2. Refactor SolvabilityPostProcessor to use these shared functions instead
+   of its own copies, splitting its own remaining logic into
+   post_processor/ submodules (entry_point, credential_chain, discovery,
+   goal_access, goal_reachable, coverage_sweep).
+3. Same for SolvabilityConstraintProcessor -> constraint_processor/.
+4. Regenerate the same 5 test seeds used in the main-vs-wip-branch
+   comparison and confirm solve rate is still 5/5 and depth distribution
+   is still 100% depth-2 (i.e. refactor changed nothing observable) before
+   touching any actual logic.
+5. ONLY after 4 passes: reapply the goal-exclusion fix to the ONE
+   canonical reachability.py this time (fixes both processors at once,
+   unlike the first attempt which only fixed SolvabilityPostProcessor's
+   copy and silently missed SolvabilityConstraintProcessor's independent
+   duplicate).
