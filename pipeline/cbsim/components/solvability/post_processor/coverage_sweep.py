@@ -62,7 +62,17 @@ def ensure_full_coverage(
     config: Dict,
     get_vulnerability_cost_fn: Callable,
     fixes_applied: List[str],
+    reachable_node_ids: set = None,
 ) -> None:
+    """
+    reachable_node_ids: when given, restricts placement to nodes the agent
+    can actually reach (see attack_spine._compute_owned_live) — call this
+    AFTER any pass that can remove edges (e.g. CertifiedAttackSpineBuilder's
+    shortcut guard), not before, and pass its final owned set here. A slot
+    force-placed on an unreachable node is present in the YAML but dead —
+    the agent can never trigger it. If omitted, falls back to the old
+    property-only eligibility (no reachability guarantee).
+    """
     solv = config.get('solvability_vulnerabilities', {})
     defined: Dict[str, tuple] = {}  # name -> (template, category)
     for category, entries in solv.items():
@@ -99,6 +109,7 @@ def ensure_full_coverage(
         eligible = [
             nid for nid, node in nodes.items()
             if nid != 'start'
+            and (reachable_node_ids is None or nid in reachable_node_ids)
             and name not in (getattr(node, 'vulnerabilities', {}) or {})
             and (
                 not match_props

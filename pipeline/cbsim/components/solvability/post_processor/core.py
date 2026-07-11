@@ -37,7 +37,8 @@ from pipeline.cbsim.components.solvability.post_processor.credential_chain impor
 from pipeline.cbsim.components.solvability.post_processor.discovery import ensure_discovery
 from pipeline.cbsim.components.solvability.post_processor.goal_access import ensure_goal_access
 from pipeline.cbsim.components.solvability.post_processor.goal_reachable import ensure_goal_reachable
-from pipeline.cbsim.components.solvability.post_processor.coverage_sweep import ensure_full_coverage
+# ensure_full_coverage is intentionally NOT wired in here — see the call
+# site in ensure_solvability()'s docstring/comment and pipeline/cbsim/generator.py.
 
 # Re-exported so `from ...solvability_post_processor import _collect_planned_vuln_names`
 # (used by SolvabilityConstraintProcessor) keeps working unchanged.
@@ -217,9 +218,13 @@ class SolvabilityPostProcessor:
             self._should_place, self._check_planned, self._get_vulnerability_cost,
             self.fixes_applied,
         )
-        ensure_full_coverage(
-            self.nodes, self.config, self._get_vulnerability_cost, self.fixes_applied,
-        )
+        # NOTE: the full-coverage sweep does NOT run here. It must run after
+        # CertifiedAttackSpineBuilder's shortcut guard (generator.py, later in
+        # the pipeline) has finished pruning edges — pruning only guarantees
+        # goal reachability, not reachability of whatever node a coverage
+        # placement landed on, so running the sweep here let ~1% of force-
+        # placed slots get orphaned by a later prune. See
+        # pipeline/cbsim/generator.py for the call site.
 
         stats = self._compute_stats()
         print(f"[Solvability] Applied {len(self.fixes_applied)} fixes")

@@ -19,7 +19,8 @@ from pipeline.cbsim.components.solvability_post_processor import SolvabilityPost
 from pipeline.cbsim.components.vulnerability_manager import VulnerabilityManager
 from pipeline.cbsim.domain_loader import YamlDomainLoader
 from pipeline.cbsim.goal_normalizer import GoalNormalizer
-from pipeline.cbsim.components.attack_spine import CertifiedAttackSpineBuilder
+from pipeline.cbsim.components.attack_spine import CertifiedAttackSpineBuilder, _compute_owned_live
+from pipeline.cbsim.components.solvability.post_processor.coverage_sweep import ensure_full_coverage
 
 
 class UniversalNetworkGenerator(NetworkGenerator):
@@ -166,6 +167,17 @@ class UniversalNetworkGenerator(NetworkGenerator):
             status = "OK" if cert['certificate_valid'] else "VIOLATION"
             print(f"  [{status}] goal={cert['goal']} target_depth={cert['target_depth']} "
                   f"verified_depth={cert['verified_bfs_depth']}")
+
+        # Runs LAST, after the attack spine's shortcut guard has finished
+        # pruning edges: pruning only guarantees GOAL reachability, so a
+        # coverage placement made any earlier would risk being orphaned by a
+        # later prune. Restricting to the final live-owned set makes every
+        # force-placed slot a guaranteed-usable action, not just a present one.
+        reachable = _compute_owned_live(self.all_nodes)
+        ensure_full_coverage(
+            self.all_nodes, self.config, post_processor._get_vulnerability_cost,
+            post_processor.fixes_applied, reachable_node_ids=reachable,
+        )
 
         return self.all_nodes
 
