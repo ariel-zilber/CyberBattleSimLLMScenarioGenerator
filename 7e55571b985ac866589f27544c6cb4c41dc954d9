@@ -1,0 +1,16 @@
+VERIFIED (task #4 complete): full 5-seed solvability check on cicd_to_production_compromise
+with BOTH processors fully refactored - 5/5 solved (inst_1-5), matching main's
+baseline exactly. Depth distribution also unchanged (100% depth-2, 15/15
+goals across the same 5 seeds). Tasks 1-4 of the solvability-file refactor
+are complete: shared/ package extracted, SolvabilityPostProcessor and
+SolvabilityConstraintProcessor both split into single-concern submodules
+under pipeline/cbsim/components/solvability/, backward-compat shims in
+place at the original file paths, zero behavioral regression on the
+metrics that matter (solve rate, depth distribution) despite non-identical
+byte-level seeded output (expected, explained in the task 2 commit note).
+
+Task #5 (reapply the depth-collapse fix to the now-single canonical
+shared/reachability.py) is NOT started - waiting for explicit user
+confirmation before touching it again, given the first unauthorized
+attempt at this exact fix broke solvability and required significant
+rework to diagnose and recover from.
