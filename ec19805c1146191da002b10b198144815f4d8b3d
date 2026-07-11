@@ -1,0 +1,21 @@
+SCOPE NOTE: this commit's diff (110+/13-) bundles ALL outstanding uncommitted
+changes to constraint_engine.py from this session, not just one edit:
+1. Firewall rule dedup key fix (content-based instead of source/target-id
+   based) — fixed massive duplicate firewall rules (~43/node -> ~8/node).
+2. New add_segmentation_blocks() feature — adds explicit BLOCK rules
+   (probability-based, default 0.15) since the codebase previously had
+   ZERO BLOCK rules anywhere, ever (only RulePermission.ALLOW existed).
+3. TODAY's fix (the one described in the commit message): broadened that
+   feature's candidate ports beyond the hardcoded RDP/SMB/etc list, and
+   made it search multiple (port,subnet) combos instead of one random
+   guess — fixes 0-block-rules on branch_to_hq/cicd specifically (dense
+   networks where the single hardcoded port was already ALLOW-everywhere).
+
+VERIFIED: block rules now 7/instance on branch_to_hq+cicd (was 0), zero
+ALLOW/BLOCK conflicts on same (port,subnet), cicd instance still solves
+(1/1). branch_to_hq solvability check was inconclusive (timeout on a
+reduced step budget) — not confirmed broken, just not confirmed either.
+
+NOT YET DONE: regenerate the real output_specialist_meta_pipeline_full_small_20260710/
+dataset directories for branch_to_hq and cicd to pick up this fix — only
+isolated /tmp test instances have been verified so far.
