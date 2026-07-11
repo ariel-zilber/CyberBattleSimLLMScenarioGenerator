@@ -30,15 +30,23 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from cyberbattle.simulation.vulenrabilites import (
     VulnerabilityInfo, VulnerabilityType, LeakedCredentials, LeakedNodesId,
+    LateralMove, PrivilegeEscalation, CustomerData,
 )
 from cyberbattle.simulation.rate import Rates
 from pipeline.cbsim.components.precondition_utils import precondition_from_properties
 from pipeline.cbsim.components.solvability.shared.vuln_registry import (
     collect_planned_vuln_names, check_planned,
 )
-from pipeline.cbsim.components.solvability.shared.template_selection import get_cred_leak_template
+from pipeline.cbsim.components.solvability.shared.template_selection import (
+    get_cred_leak_template, get_discovery_template,
+)
 from pipeline.cbsim.components.solvability.shared.credential_helpers import make_cached_credentials
 from pipeline.cbsim.components.solvability.shared.firewall_helpers import open_firewall_for_cred
+
+# Matches pipeline/phase2/evaluator.py's _REMOTE_OWNING_OUTCOMES (the
+# serialized-string equivalents), for the live in-memory ownership fixed
+# point in _compute_owned_live below.
+_REMOTE_OWNING_TYPES = (LateralMove, PrivilegeEscalation, LeakedCredentials, LeakedNodesId, CustomerData)
 
 
 # ---------------------------------------------------------------------------
@@ -110,6 +118,79 @@ def _bfs_path(adj: Dict[str, Set[str]], start: str, target: str) -> Optional[Lis
     return None
 
 
+def _compute_owned_live(nodes: Dict) -> Set[str]:
+    """Fixed-point ownership simulation — the actual solvability oracle,
+    ported from pipeline/phase2/evaluator.py::_compute_owned (which is what
+    `--require-solvable` / evaluate_scenario really gate on, as opposed to
+    the more permissive node-to-node adjacency in _build_attack_graph above).
+
+    Critically: holding credentials for a node is NOT enough to own it —
+    that node must ALSO be independently *discovered* (via some LeakedNodesId
+    outcome) before "lateral move via credential match" applies. Credentials
+    are tracked as a shared wallet of raw strings, not per-target edges.
+    This is why every spine hop needs both a credential leak AND a discovery
+    entry for the same target — see _inject_credential_edge /
+    _inject_discovery_edge below.
+    """
+    if 'start' not in nodes:
+        return set()
+
+    owned: Set[str] = {'start'}
+    discovered: Set[str] = {'start'}
+    credentials: Set[str] = set()
+
+    changed = True
+    while changed:
+        changed = False
+
+        for node_id in list(owned):
+            node = nodes.get(node_id)
+            vulns = getattr(node, 'vulnerabilities', {}) if node else {}
+            if not isinstance(vulns, dict):
+                continue
+            for v in vulns.values():
+                if getattr(v, 'type', None) != VulnerabilityType.LOCAL:
+                    continue
+                outcome = getattr(v, 'outcome', None)
+                if isinstance(outcome, LeakedCredentials):
+                    for cred in outcome.credentials:
+                        cred_str = getattr(cred, 'credential', '')
+                        if cred_str and cred_str not in credentials:
+                            credentials.add(cred_str)
+                            changed = True
+                elif isinstance(outcome, LeakedNodesId):
+                    for n in outcome.nodes:
+                        if n and n not in discovered:
+                            discovered.add(n)
+                            changed = True
+
+        for tgt_id in list(discovered):
+            if tgt_id in owned or tgt_id not in nodes:
+                continue
+            vulns = getattr(nodes[tgt_id], 'vulnerabilities', {})
+            if not isinstance(vulns, dict):
+                continue
+            for v in vulns.values():
+                if getattr(v, 'type', None) != VulnerabilityType.REMOTE:
+                    continue
+                if isinstance(getattr(v, 'outcome', None), _REMOTE_OWNING_TYPES):
+                    owned.add(tgt_id)
+                    changed = True
+                    break
+
+        for node_id in list(discovered):
+            if node_id in owned or node_id not in nodes:
+                continue
+            for svc in getattr(nodes[node_id], 'services', []):
+                allowed = set(getattr(svc, 'allowedCredentials', []) or [])
+                if credentials & allowed:
+                    owned.add(node_id)
+                    changed = True
+                    break
+
+    return owned
+
+
 # ---------------------------------------------------------------------------
 # Edge injection / removal
 # ---------------------------------------------------------------------------
@@ -154,6 +235,45 @@ def _inject_credential_edge(
 
     open_firewall_for_cred(nodes, src_id, dst_id)
     fixes_applied.append(f"[AttackSpine] Injected credential edge {src_id} -> {dst_id}")
+    return True
+
+
+def _inject_discovery_edge(
+    nodes: Dict, src_id: str, dst_id: str,
+    discovery_templates: List[Dict], planned_vuln_names: set,
+    fixes_applied: List[str],
+) -> bool:
+    """Deterministically add/extend a LOCAL LeakedNodesId vuln on src_id so
+    it lists dst_id. Required alongside _inject_credential_edge: per
+    _compute_owned_live (and the real evaluator/simulation semantics),
+    holding a credential for a node does not grant ownership unless that
+    node has also been independently discovered."""
+    tmpl = get_discovery_template(discovery_templates)
+    if not tmpl or not check_planned(tmpl, planned_vuln_names, 'AttackSpine', 'discovery'):
+        return False
+
+    src_node = nodes[src_id]
+    vulns = getattr(src_node, 'vulnerabilities', {})
+    if not isinstance(vulns, dict):
+        vulns = {}
+
+    existing = vulns.get(tmpl['name'])
+    if existing is not None and isinstance(getattr(existing, 'outcome', None), LeakedNodesId):
+        if dst_id not in existing.outcome.nodes:
+            existing.outcome.nodes.append(dst_id)
+    else:
+        vulns[tmpl['name']] = VulnerabilityInfo(
+            description=tmpl['description'],
+            type=VulnerabilityType.LOCAL,
+            outcome=LeakedNodesId(nodes=[dst_id]),
+            precondition=precondition_from_properties(tmpl.get('match_properties', [])),
+            reward_string=tmpl.get('reward', 'Exploit successful'),
+            cost=tmpl.get('cost', 1.0),
+            rates=Rates(successRate=tmpl.get('success_rate', 0.8)),
+        )
+        src_node.vulnerabilities = vulns
+
+    fixes_applied.append(f"[AttackSpine] Injected discovery edge {src_id} -> {dst_id}")
     return True
 
 
@@ -214,6 +334,7 @@ class CertifiedAttackSpineBuilder:
 
         solv = config.get('solvability_vulnerabilities', {})
         self.cred_leak_templates = solv.get('credential_leak', [])
+        self.discovery_templates = solv.get('discovery', [])
         self._planned_vuln_names = collect_planned_vuln_names(config)
 
     def _entry_node_ids(self) -> List[str]:
@@ -243,9 +364,10 @@ class CertifiedAttackSpineBuilder:
         certificates = []
 
         used_intermediates: Set[str] = set(entries) | set(goals) | {'start'}
+        all_goal_ids = set(goals)
 
         for goal_id in goals:
-            cert = self._build_spine_for_goal(goal_id, entries, used_intermediates)
+            cert = self._build_spine_for_goal(goal_id, entries, used_intermediates, all_goal_ids)
             certificates.append(cert)
 
         result = {
@@ -255,7 +377,8 @@ class CertifiedAttackSpineBuilder:
         return result
 
     def _build_spine_for_goal(self, goal_id: str, entries: List[str],
-                               used_intermediates: Set[str]) -> dict:
+                               used_intermediates: Set[str],
+                               all_goal_ids: Set[str]) -> dict:
         if not entries:
             return {
                 'goal': goal_id, 'target_depth': None, 'verified_bfs_depth': -1,
@@ -292,21 +415,33 @@ class CertifiedAttackSpineBuilder:
         edge_mechanisms = []
         protected_edges: Set[Tuple[str, str]] = set()
         for src, dst in zip(path[1:-1], path[2:]):  # skip start->entry (already real)
-            ok = _inject_credential_edge(
+            # Both mechanisms are required: _compute_owned_live only grants
+            # ownership via credential match on a node that's ALSO been
+            # independently discovered (see _compute_owned_live docstring).
+            # A credential-only hop is invisible to the real solvability
+            # oracle even though it looks like a valid edge in the simpler
+            # adjacency graph used for depth reporting.
+            cred_ok = _inject_credential_edge(
                 self.nodes, src, dst, self.cred_leak_templates,
                 self._planned_vuln_names, self.fixes_applied,
             )
-            if ok:
+            disc_ok = _inject_discovery_edge(
+                self.nodes, src, dst, self.discovery_templates,
+                self._planned_vuln_names, self.fixes_applied,
+            )
+            if cred_ok and disc_ok:
                 protected_edges.add((src, dst))
-                edge_mechanisms.append('credential')
+                edge_mechanisms.append('credential+discovery')
             else:
                 edge_mechanisms.append('failed')
         protected_edges.add((path[0], path[1]))  # start->entry, always protected
 
-        shortcut_violation = self._shortcut_guard(path[0], goal_id, target_depth, protected_edges)
+        shortcut_violation = self._shortcut_guard(
+            path[0], goal_id, target_depth, protected_edges, all_goal_ids)
 
         adj = _build_attack_graph(self.nodes)
         verified_depth = _bfs_depth(adj, 'start', goal_id)
+        actually_owned = goal_id in _compute_owned_live(self.nodes)
 
         return {
             'goal': goal_id,
@@ -314,15 +449,29 @@ class CertifiedAttackSpineBuilder:
             'verified_bfs_depth': verified_depth,
             'path': path,
             'edge_mechanisms': edge_mechanisms,
-            'certificate_valid': verified_depth == target_depth and not shortcut_violation,
+            'certificate_valid': (
+                verified_depth == target_depth
+                and not shortcut_violation
+                and actually_owned
+            ),
             'shortcut_violation': shortcut_violation,
+            'solvable': actually_owned,
         }
 
     def _shortcut_guard(self, start_id: str, goal_id: str, target_depth: int,
-                         protected_edges: Set[Tuple[str, str]]) -> bool:
+                         protected_edges: Set[Tuple[str, str]],
+                         all_goal_ids: Set[str]) -> bool:
         """While BFS(start, goal) < target_depth, remove one non-protected
         edge on the current shortest path. Returns True if it gets stuck
-        (a shortcut survives that can't be safely removed)."""
+        (a shortcut survives that can't be safely removed).
+
+        Safety check on every removal covers EVERY goal in the scenario, not
+        just this one — an edge that looks redundant for `goal_id` can still
+        be another goal's only path in, and removing it would silently
+        strand that other goal. (Found via real generation: a shared-edge
+        removal made one goal in a 3-goal scenario permanently unreachable
+        while this goal's own certificate still validated.)
+        """
         guard_iterations = 0
         # Each iteration fully severs one (u, v) hop (every credential/discovery
         # instance behind it at once — see _remove_hop_edge). Bounded by total
@@ -349,8 +498,13 @@ class CertifiedAttackSpineBuilder:
                 removed = _remove_hop_edge(self.nodes, u, v)
                 if not removed:
                     continue
-                new_adj = _build_attack_graph(self.nodes)
-                if _bfs_depth(new_adj, start_id, goal_id) >= 0:
+                # Safety oracle: real ownership fixed point, not the looser
+                # adjacency BFS (which can't see the discovery-gating rule —
+                # see _compute_owned_live). This is what --require-solvable
+                # actually checks, so it's what must never regress.
+                owned_after = _compute_owned_live(self.nodes)
+                all_still_reachable = all_goal_ids.issubset(owned_after)
+                if all_still_reachable:
                     self.fixes_applied.append(
                         f"[AttackSpine] Severed shortcut edge {u} -> {v} "
                         f"({len(removed)} instance(s), collapsed depth below target {target_depth})")
