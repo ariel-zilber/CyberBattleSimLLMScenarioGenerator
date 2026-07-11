@@ -4,23 +4,24 @@
 
 import random
 from typing import Dict, List
-from cyberbattle.simulation.nodes import NodeInfo
-from cyberbattle.simulation.identifiers import Identifiers
-from cyberbattlesim_network_gen.generators.network_generator import NetworkGenerator
 
-from pipeline.cbsim.domain_loader import YamlDomainLoader
+from cyberbattle.simulation.identifiers import Identifiers
+from cyberbattle.simulation.nodes import NodeInfo
+from cyberbattle.simulation.vulenrabilites import (
+    VulnerabilityType
+)
+from cyberbattlesim_network_gen.generators.network_generator import NetworkGenerator
+from pipeline.cbsim.components.constraint_engine import ConstraintEngine
 from pipeline.cbsim.components.network_utils import NetworkUtils
 from pipeline.cbsim.components.node_builder import NodeBuilder
-from pipeline.cbsim.components.constraint_engine import ConstraintEngine
 from pipeline.cbsim.components.solvability_constraint_processor import SolvabilityConstraintProcessor
-from pipeline.cbsim.components.vulnerability_manager import VulnerabilityManager
 from pipeline.cbsim.components.solvability_post_processor import SolvabilityPostProcessor
+from pipeline.cbsim.components.vulnerability_manager import VulnerabilityManager
+from pipeline.cbsim.domain_loader import YamlDomainLoader
 from pipeline.cbsim.goal_normalizer import GoalNormalizer
-from cyberbattle.simulation.vulenrabilites import (
-    VulnerabilityInfo, VulnerabilityType, ProbeSucceeded, 
-    LeakedCredentials, CachedCredential, CustomerData,
-    ExploitFailed, PrivilegeEscalation, LateralMove, LeakedNodesId
-)
+from pipeline.cbsim.components.attack_spine import CertifiedAttackSpineBuilder
+
+
 class UniversalNetworkGenerator(NetworkGenerator):
 
     def __init__(self, domain_config_path: str, seed: int = None, **kwargs) -> None:
@@ -28,6 +29,7 @@ class UniversalNetworkGenerator(NetworkGenerator):
 
         if seed is not None:
             random.seed(seed)
+        self.seed = seed
 
         self.loader = YamlDomainLoader(domain_config_path)
         self.config = self.loader.data
@@ -101,6 +103,8 @@ class UniversalNetworkGenerator(NetworkGenerator):
             is_inter_domain=True
         )
 
+        constraint_engine.add_segmentation_blocks()
+
         print("[Step 4/5] Applying vulnerabilities...")
         self.vuln_manager.apply_vulnerabilities(self.all_nodes, self.domain_node_map)
 
@@ -149,6 +153,19 @@ class UniversalNetworkGenerator(NetworkGenerator):
                             node.properties.append(prop)
                 except Exception as e:
                     ...
+
+        print("[Attack Spine] Certifying minimum attack depth per goal...")
+        spine_builder = CertifiedAttackSpineBuilder(
+            nodes=self.all_nodes,
+            config=self.config,
+        )
+        self.depth_certificate = spine_builder.apply()
+        for msg in spine_builder.fixes_applied:
+            print(f"  {msg}")
+        for cert in self.depth_certificate.get('goals', []):
+            status = "OK" if cert['certificate_valid'] else "VIOLATION"
+            print(f"  [{status}] goal={cert['goal']} target_depth={cert['target_depth']} "
+                  f"verified_depth={cert['verified_bfs_depth']}")
 
         return self.all_nodes
 
