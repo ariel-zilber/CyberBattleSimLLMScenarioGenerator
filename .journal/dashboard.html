@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Scenario Generator Research Dashboard</title>
+  <style>
+    :root { color-scheme: dark; --bg:#08111f; --panel:#101c2e; --panel2:#14243a; --text:#e7eef9;
+      --muted:#9fb0c8; --line:#263a55; --cyan:#42d5d2; --green:#63db9b; --amber:#ffca6a;
+      --red:#ff7b86; --violet:#b9a0ff; }
+    * { box-sizing:border-box } body { margin:0; font:15px/1.5 Inter,system-ui,sans-serif;
+      background:radial-gradient(circle at 15% 0,#163252 0,transparent 32%),var(--bg); color:var(--text) }
+    main { max-width:1280px; margin:auto; padding:34px 24px 80px } h1 { margin:0; font-size:clamp(30px,5vw,56px); line-height:1.05 }
+    h2 { margin:38px 0 14px; font-size:24px } h3 { margin:0 0 8px } p { color:var(--muted) }
+    .eyebrow { color:var(--cyan); text-transform:uppercase; letter-spacing:.16em; font-weight:700; font-size:12px }
+    .notice { margin:24px 0; padding:16px 18px; border:1px solid var(--amber); border-radius:12px;
+      background:#2b2518; color:#ffe6ad } .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px }
+    .card { background:linear-gradient(145deg,var(--panel2),var(--panel)); border:1px solid var(--line); border-radius:14px; padding:18px }
+    .metric { font-size:34px; font-weight:800; color:var(--cyan) } .label { color:var(--muted); font-size:13px }
+    .green { color:var(--green) } .amber { color:var(--amber) } .red { color:var(--red) } .violet { color:var(--violet) }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden }
+    th,td { padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left }
+    th { color:#c9d8ed; background:#17263b; position:sticky; top:0 } tr:last-child td { border-bottom:0 }
+    .tag { display:inline-block; border-radius:999px; padding:3px 8px; font-size:11px; font-weight:750; white-space:nowrap }
+    .runtime { color:#baf8d3; background:#173d2c } .artifact { color:#b8f3f1; background:#153d45 }
+    .source { color:#ffe1a7; background:#463719 } .withdrawn { color:#d9caff; background:#352a50 }
+    .boundary { color:#c6d0dc; background:#2b3542 } .open { color:#ffc0c5; background:#4a232b }
+    code { color:#d2c5ff } a { color:#75e3df } .small { font-size:12px;color:var(--muted) }
+    .two { display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:14px }
+    ul { padding-left:20px } li { margin:6px 0;color:var(--muted) } strong { color:var(--text) }
+    .footer { margin-top:45px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted) }
+    @media(max-width:700px){th:nth-child(4),td:nth-child(4){display:none} main{padding:22px 12px 60px}}
+  </style>
+</head>
+<body><main>
+  <div class="eyebrow">CyberBattleSim LLM Scenario Generator · research state · 2026-07-16</div>
+  <h1>Data-legitimacy<br>verification dashboard</h1>
+  <p>This dashboard summarizes the audit journal without treating every observation as a proven production bug.</p>
+  <div class="notice"><strong>Critical interpretation rule:</strong> the 73 numbered entries are an audit inventory.
+    They mix production findings, experimental object-generator findings, quality concerns, and hypotheses.
+    Two high-severity claims have been withdrawn and another was materially corrected after runtime testing.</div>
+
+  <section class="grid">
+    <div class="card"><div class="metric">73</div><div class="label">inventory entries, not proven-bug count</div></div>
+    <div class="card"><div class="metric green">4+</div><div class="label">claims now behaviorally/runtime reproduced</div></div>
+    <div class="card"><div class="metric violet">2</div><div class="label">explicitly withdrawn findings (#41, #57)</div></div>
+    <div class="card"><div class="metric amber">1</div><div class="label">major depth claim corrected after runtime replay</div></div>
+    <div class="card"><div class="metric">21/21</div><div class="label">focused object/condition tests passed; coverage gaps remain</div></div>
+  </section>
+
+  <h2>Strongest verified evidence</h2>
+  <div class="two">
+    <div class="card"><h3 class="green">Runtime: firewall over-permission</h3><p>An actual generated SSH edge crossed
+      <code>10.1.10.0/24 → 10.0.1.0/24</code> without the exact subnet rule pair. With valid Connect state,
+      the improved actuator returned <code>LateralMove</code> and owned the target.</p></div>
+    <div class="card"><h3 class="red">Runtime: firewall blocking</h3><p>A generated credential edge missing its
+      source outgoing port rule returned reward <code>-10</code>, no outcome, and target privilege 0. The static
+      evaluator nevertheless included the same edge.</p></div>
+    <div class="card"><h3 class="green">Component: goal-policy drift</h3><p>Production-nested settings requested
+      strategy <code>value</code>, promotion disabled, and a shared tag. GoalNormalizer used <code>diverse</code>,
+      promotion enabled, and no shared tag.</p></div>
+    <div class="card"><h3 class="green">Runtime adapter: missing Admin gate</h3><p>The experimental object fixture executed
+      System escalation directly at User. The earlier numeric 9→8 claim was wrong: compiled initial discovery added
+      one action, so the tested sequence still contained 9 actions.</p></div>
+    <div class="card"><h3 class="green">Artifact: nondeterministic generation</h3><p>Same numeric seed 4242 under different
+      <code>PYTHONHASHSEED</code> values produced different generated placements. The object MVP also emitted different
+      SHA-256 values for identical input.</p></div>
+    <div class="card"><h3 class="amber">Artifact: credential-bound mismatch</h3><p>A real 778-node xlarge artifact contains
+      1,554 unique credentials and one action holding 1,552. Evaluator observation high is 1,000; loaded model
+      denominator is 100. Cache loss has <em>not</em> been observed.</p></div>
+  </div>
+
+  <h2>Corrections produced by adversarial verification</h2>
+  <table><thead><tr><th>Index</th><th>Previous claim</th><th>Verified result</th><th>Status</th></tr></thead><tbody>
+    <tr><td>41</td><td>100-node evaluator cap prevents faithful xlarge evaluation</td><td>A real 778-node artifact loaded and reset successfully; improved observations are neighborhood-size invariant.</td><td><span class="tag withdrawn">WITHDRAWN</span></td></tr>
+    <tr><td>57</td><td>Remote exploits wrongly bypass firewall</td><td>CyberBattleSim intentionally firewall-gates Connect, not remote vulnerability exploit.</td><td><span class="tag withdrawn">WITHDRAWN</span></td></tr>
+    <tr><td>37</td><td>53.7% of credential edges dynamically blocked</td><td>53.7% violate exact serialized subnet policy; actual first-port runtime rules predict 15.8% blocked and over-permit 103 policy-invalid edges.</td><td><span class="tag runtime">CORRECTED + REPRODUCED</span></td></tr>
+    <tr><td>70</td><td>Preferred object fixture collapses depth 9 to 8</td><td>Admin gate is bypassed, but an added discovery action keeps tested runtime action count at 9.</td><td><span class="tag artifact">CORRECTED</span></td></tr>
+    <tr><td>42</td><td>Credential cache loses data above 1,000</td><td>No truncation shown. Confirmed issue is out-of-bound observations and invalid denominator risk.</td><td><span class="tag source">NARROWED</span></td></tr>
+  </tbody></table>
+
+  <h2>Production generator inventory</h2>
+  <table><thead><tr><th>#</th><th>Finding</th><th>Evidence now</th><th>What remains</th></tr></thead><tbody>
+    <tr><td>1–7</td><td>Depth-floor, multi-goal, replacement, and privilege-state semantics</td><td><span class="tag source">SOURCE / COMPONENT</span></td><td>Authoritative final-artifact dynamic BFS comparisons</td></tr>
+    <tr><td>8–14</td><td>Coverage scan, resume/provenance, BFS error labels, stale metrics, expanded-data validation</td><td><span class="tag source">SOURCE / ARTIFACT</span></td><td>End-to-end batch accounting</td></tr>
+    <tr><td>15–16</td><td>Malformed/partial LLM critic responses default to passing-looking scores</td><td><span class="tag artifact">DIRECT PARSER PROBE</span></td><td>Measure frequency in real critic outputs</td></tr>
+    <tr><td>17–18</td><td>Post-static audit scope and pass/warning presentation</td><td><span class="tag source">SOURCE</span></td><td>Final serialized dataset audit comparison</td></tr>
+    <tr><td>19–20</td><td>Existing-directory and retry contamination</td><td><span class="tag source">CURRENT SOURCE</span></td><td>Two-attempt real generator reproduction</td></tr>
+    <tr><td>21–27</td><td>Static “BFS”, unused timeout, temp provenance, counts/manifests, coverage usability/parser skips</td><td><span class="tag source">MIXED</span></td><td>Runtime usability samples and batch manifest checks</td></tr>
+    <tr><td>28</td><td>Same numeric seed differs across Python hash seeds</td><td><span class="tag artifact">ARTIFACT REPRODUCED</span></td><td>Isolate every unordered source</td></tr>
+    <tr><td>29–30</td><td>Non-blocking certificates; graph mutation after certification</td><td><span class="tag artifact">ARTIFACT + COMPONENT</span></td><td>Persist/replay final certificates</td></tr>
+    <tr><td>31–36</td><td>Certificate semantics and goal normalization behavior</td><td><span class="tag artifact">SOURCE + SENTINEL REPRO</span></td><td>Full generated-scenario consequence</td></tr>
+    <tr><td>37–40</td><td>Firewall policy, static/runtime graph, wildcard semantics</td><td><span class="tag runtime">RUNTIME + ARTIFACT</span></td><td>Dataset-level goal/shortcut effect</td></tr>
+    <tr><td>41</td><td>100-node xlarge cap</td><td><span class="tag withdrawn">WITHDRAWN</span></td><td>None without a different bound consumer</td></tr>
+    <tr><td>42</td><td>Xlarge credential bounds/denominators</td><td><span class="tag artifact">ARTIFACT REPRODUCED</span></td><td>Execute 1,552-credential action and validate observation</td></tr>
+    <tr><td>43–49</td><td>Replay acceptance and runtime metric semantics</td><td><span class="tag source">CURRENT SOURCE</span></td><td>Controlled evaluator episodes</td></tr>
+    <tr><td>50–54</td><td>Split contamination, duplicate signatures, diversity inclusion, schema drift</td><td><span class="tag source">SOURCE / PROBE</span></td><td>Content-hash benchmark over real splits</td></tr>
+  </tbody></table>
+
+  <h2>Experimental object-generator MVP</h2>
+  <p>The object generator is isolated and currently untracked. Its README says exact environment replay is outside the MVP.
+    These findings must not be counted as production-data failures.</p>
+  <table><thead><tr><th>#</th><th>Finding</th><th>Evidence</th><th>Scope</th></tr></thead><tbody>
+    <tr><td>55</td><td>Initial BFS state differs from compilation</td><td><span class="tag artifact">REPRODUCED</span></td><td>Experimental compiler</td></tr>
+    <tr><td>56</td><td>Local prerequisites validated against target, compiled on source</td><td><span class="tag artifact">REPRODUCED</span></td><td>Experimental validator/compiler</td></tr>
+    <tr><td>57</td><td>Remote exploit firewall mismatch</td><td><span class="tag withdrawn">WITHDRAWN</span></td><td>No defect under current runtime</td></tr>
+    <tr><td>58</td><td>Probe is state-neutral in object BFS</td><td><span class="tag artifact">COMPONENT REPRO</span></td><td>Experimental BFS</td></tr>
+    <tr><td>59</td><td>Blocked Connect compiles allow before deny</td><td><span class="tag artifact">REPRO + RUNTIME SOURCE</span></td><td>Experimental compiler</td></tr>
+    <tr><td>60–61</td><td>BFS truncation ambiguity; mandatory-bypass analysis wrong set</td><td><span class="tag artifact">COMPONENT REPRO</span></td><td>Experimental analysis</td></tr>
+    <tr><td>62–66</td><td>Path escape, stale output, reserved start, subnet allocation, duplicate nodes</td><td><span class="tag artifact">DIRECT REPRO</span></td><td>Experimental parser/compiler</td></tr>
+    <tr><td>67–71</td><td>Privilege grants, zero-rate edges, Probe semantics, missing gates, condition rules</td><td><span class="tag artifact">COMPONENT + RUNTIME SOURCE</span></td><td>Experimental semantic model</td></tr>
+    <tr><td>72–73</td><td>Hash-seed-dependent hash; digest excludes compiled artifact</td><td><span class="tag artifact">DIRECT REPRO</span></td><td>Experimental provenance</td></tr>
+  </tbody></table>
+
+  <h2>Latest certificate experiment</h2>
+  <div class="card"><p>Seed 4242, current perimeter-small generator, 50 nodes:</p>
+    <table><thead><tr><th>Goal</th><th>Certificate at certification time</th><th>Final graph after coverage</th></tr></thead><tbody>
+      <tr><td>InternetEdge_WAFs_1</td><td>target 6, measured 5, invalid</td><td>depth 7, owned</td></tr>
+      <tr><td>InternetEdge_MikroTikRouters_1</td><td>target 3, measured 3, valid</td><td>depth 7, owned</td></tr>
+      <tr><td>Z1_ServerFarm_AdminWorkstations_4</td><td>target 6, measured 6, valid</td><td>depth 6, owned</td></tr>
+    </tbody></table>
+    <p class="small">This proves certificates become stale after the coverage pass for this generated in-memory case.
+      It does not by itself prove a shortcut: the observed depths increased.</p></div>
+
+  <h2>Specialist training health: seed 42</h2>
+  <div class="two">
+    <div class="card"><h3 class="amber">s_lateral — learned, weaker transfer</h3>
+      <p>Final held-out success is 28% versus a 4% unmasked random baseline: roughly 7× baseline and clear evidence
+      of learning. Its 91.7% invalid-action rate and large train/eval gap indicate limited held-out generalization,
+      not proof that the model or data is bad.</p></div>
+    <div class="card"><h3 class="green">s_windows — strong held-out model</h3>
+      <p>Held-out success peaks at 96% around episode 4,000. By episode 8,000 it is 90%, invalid actions rise from
+      40.9% to 62.8%, and productive-action rank worsens from 7.42 to 13.94. Longer training is not improving every
+      metric, but performance remains far above the 8–12% random baseline.</p></div>
+  </div>
+  <table><thead><tr><th>Run issue</th><th>Observed evidence</th><th>Interpretation</th></tr></thead><tbody>
+    <tr><td>Resume duplication</td><td>Episodes 501–607 appear twice and are identical in both CSVs</td><td>Deduplicate before aggregation; preserve restart boundary</td></tr>
+    <tr><td>BFS telemetry</td><td>Only 252 early rows populated; every checkpoint has 0 evaluated BFS pairs</td><td>These runs do not validate BFS depth/solvability</td></tr>
+    <tr><td>One-step successes</td><td>12.5% lateral; 14.2% Windows</td><td>Separate pre-owned/local tasks from multistep chains</td></tr>
+    <tr><td>Split overlap</td><td>0 train/eval scenario-path overlap</td><td>Lateral gap is not direct path-level leakage</td></tr>
+  </tbody></table>
+
+  <h2>Recommended research sequence</h2>
+  <ol>
+    <li><strong>Do not fix from the 73-item index.</strong> Promote only runtime/artifact-reproduced production findings.</li>
+    <li>Run final serialized scenarios through one authoritative dynamic solver and compare exact goals, privilege and depth.</li>
+    <li>Make firewall tests use the actuator’s actual rule order; separately decide whether subnet policy is intended.</li>
+    <li>Reproduce main-generator retry contamination with two real attempts before assigning P0.</li>
+    <li>Execute the 1,552-credential vulnerability and test <code>observation_space.contains()</code>.</li>
+    <li>Keep the object MVP in a separate research track until it emits loader-complete artifacts.</li>
+  </ol>
+
+  <div class="footer">Full evidence:
+    <a href="context/verification-ledger.md">verification ledger</a> ·
+    <a href="problems/index.md">complete numbered inventory</a> ·
+    <a href="evidence/adversarial-verification-20260715.md">adversarial reproductions</a> ·
+    <a href="runs/2026-07-16-review-pass-26.md">latest xlarge correction</a>
+  </div>
+</main></body></html>

@@ -1,0 +1,14 @@
+expansion object_perimeter_to_database_0001 using s_linux {
+  node database: database in data goal {
+    service SQL accepts database_password
+  }
+
+  allow corporate -> data on SQL
+
+  dc -> database: discover DiscoverDatabase by s_linux requires SYSTEM
+  dc -> database: leak DatabaseCredential credential database_password via SQL by s_linux requires SYSTEM
+  dc -> database: connect DatabaseSQL via SQL using database_password by s_linux grants USER requires SYSTEM
+  database -> database: escalate DatabaseRoot by s_linux from USER to SYSTEM needs Linux, Database
+
+  target database at SYSTEM depth 13 to 13 through perimeter, server_farm, corporate, data
+}

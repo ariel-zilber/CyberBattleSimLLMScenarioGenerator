@@ -1,0 +1,26 @@
+Scenario(
+    name="object-perimeter-to-domain-0001",
+    nodes=[
+        Node("gateway", "linux_gateway", "perimeter",
+             properties=["Linux", "Gateway"], services={"SSH": ["gateway_ssh"]}),
+        Node("app", "linux_server", "server_farm",
+             properties=["Linux", "WebServer"], services={"SSH": ["app_ssh"]}),
+        Node("dc", "domain_controller", "corporate",
+             properties=["Windows", "DomainController"],
+             services={"LDAP": ["domain_user"]}, goal=True, value=5000),
+    ],
+    transitions=[
+        RemoteExploit("start", "gateway", "GatewayRCE", grants="User",
+                      prerequisites=["Linux"]),
+        Discover("gateway", "app", "DiscoverApp", requires="User"),
+        LeakCredential("gateway", "app", "app_ssh", service="SSH", requires="User"),
+        Connect("gateway", "app", "SSH", "app_ssh", grants="User", requires="User"),
+        Discover("app", "dc", "DiscoverDC", requires="User"),
+        LeakCredential("app", "dc", "domain_user", service="LDAP", requires="User"),
+        Connect("app", "dc", "LDAP", "domain_user", grants="User", requires="User"),
+        Escalate("dc", "dc", "DomainAdminEscalation", requires="User", grants="Admin"),
+        Escalate("dc", "dc", "SystemEscalation", requires="Admin", grants="System"),
+    ],
+    initial=Initial(discovered=["gateway"]),
+    goal=Goal("dc", "System", minimum_depth=9, maximum_depth=9),
+)

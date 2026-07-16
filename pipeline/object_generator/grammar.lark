@@ -1,0 +1,42 @@
+start: scenario
+
+scenario: "scenario" NAME "using" name_list "{" statement* "}"
+
+?statement: node
+          | initial
+          | discover
+          | exploit
+          | leak
+          | connect
+          | escalate
+          | firewall
+          | target
+
+node: "node" NAME ":" NAME "in" NAME goal_marker? "{" node_item* "}"
+goal_marker: "goal"
+?node_item: properties | service
+properties: "props" name_list
+service: "service" NAME ("accepts" name_list)?
+
+initial: "initially" "discover" name_list
+
+discover: NAME "->" NAME ":" "discover" NAME "by" NAME requires?
+exploit: NAME "->" NAME ":" "exploit" NAME "by" NAME "grants" PRIVILEGE requires? prerequisites?
+leak: NAME "->" NAME ":" "leak" NAME "credential" NAME "via" NAME "by" NAME requires?
+connect: NAME "->" NAME ":" "connect" NAME "via" NAME "using" NAME "by" NAME "grants" PRIVILEGE requires?
+escalate: NAME "->" NAME ":" "escalate" NAME "by" NAME "from" PRIVILEGE "to" PRIVILEGE prerequisites?
+
+requires: "requires" PRIVILEGE
+prerequisites: "needs" name_list
+firewall: PERMISSION NAME "->" NAME "on" NAME
+target: "target" NAME "at" PRIVILEGE "depth" INT ("to" INT)? ("through" name_list)?
+name_list: NAME ("," NAME)*
+
+PRIVILEGE: "NONE" | "USER" | "ADMIN" | "SYSTEM"
+PERMISSION.2: "allow" | "block"
+NAME: /[A-Za-z_][A-Za-z0-9_.-]*/
+
+%import common.INT
+%import common.WS
+%ignore WS
+%ignore /#[^\n]*/

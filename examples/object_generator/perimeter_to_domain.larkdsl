@@ -1,0 +1,32 @@
+scenario object_perimeter_to_domain_0002 using s_network, s_linux, s_identity {
+  node gateway: linux_gateway in perimeter {
+    service SSH accepts gateway_ssh
+  }
+
+  node app: linux_server in server_farm {
+    props WebServer
+    service SSH accepts app_ssh
+  }
+
+  node dc: domain_controller in corporate goal {
+    service LDAP accepts domain_user
+  }
+
+  initially discover gateway
+
+  allow perimeter -> server_farm on SSH
+  allow server_farm -> corporate on LDAP
+  block perimeter -> corporate on LDAP
+
+  start -> gateway: exploit GatewayRCE by s_network grants USER needs Linux
+  gateway -> app: discover DiscoverApp by s_linux requires USER
+  gateway -> app: leak AppCredential credential app_ssh via SSH by s_linux requires USER
+  gateway -> app: connect AppSSH via SSH using app_ssh by s_linux grants USER requires USER
+  app -> dc: discover DiscoverDC by s_identity requires USER
+  app -> dc: leak DomainCredential credential domain_user via LDAP by s_identity requires USER
+  app -> dc: connect DomainLDAP via LDAP using domain_user by s_identity grants USER requires USER
+  dc -> dc: escalate DomainAdminEscalation by s_identity from USER to ADMIN needs Windows, DomainController
+  dc -> dc: escalate SystemEscalation by s_identity from ADMIN to SYSTEM needs Windows, DomainController
+
+  target dc at SYSTEM depth 9 to 9 through perimeter, server_farm, corporate
+}
